@@ -1,36 +1,28 @@
-- hosts: 127.0.0.1
-  connection: local
-  vars:
-    node_version: "0.10.28"
+---
+- name: update web servers
+  hosts: webservers
+  remote_user: root
+
   tasks:
-  - name: Check for node.js
-    shell: test "$(node -v 2> /dev/null)" = v{{node_version}}
-    register: nodejs_installed
-    ignore_errors: True
-    tags:
-      - nodejs
+  - name: ensure apache is at the latest version
+    yum:
+      name: httpd
+      state: latest
+  - name: write the apache config file
+    template:
+      src: /srv/httpd.j2
+      dest: /etc/httpd.conf
 
-  - name: Create temp dir for compiling node.js
-    shell: mktemp -d node.XXXXXXX
-    register: node_tmp_dir
-    when: nodejs_installed|failed
-    tags:
-      - nodejs
+- name: update db servers
+  hosts: databases
+  remote_user: root
 
-  - name: Download node.js source
-    shell: curl http://nodejs.org/dist/v{{node_version}}/node-v{{node_version}}.tar.gz | tar xz --strip-components=1 chdir={{ node_tmp_dir.stdout }}
-    when: nodejs_installed|failed
-    tags:
-      - nodejs
-
-  - name: Configure, build and install node.js
-    shell: ./configure && make && make install chdir={{ node_tmp_dir.stdout }}
-    when: nodejs_installed|failed
-    tags:
-      - nodejs
-
-  - name: Cleanup node.js source
-    shell: rm -rf {{ node_tmp_dir.stdout }}
-    when: nodejs_installed|failed
-    tags:
-      - nodejs
+  tasks:
+  - name: ensure postgresql is at the latest version
+    yum:
+      name: postgresql
+      state: latest
+  - name: ensure that postgresql is started
+    service:
+      name: postgresql
+      state: started

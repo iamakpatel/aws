@@ -1,78 +1,20 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: Template to deploy an EC2 Instance
 Parameters:
-  AppId:
-    Type: Number
-    Description: PlanIT application ID without APP- (ex. 4646)
-    # Default: 4708
-  AnsibleEnvironment: #This is the ansible environment (qa/prod)
-    Type: "String"
-    Default: "qa"
-    Description: This is the ansible environment (qa/prod)
-    AllowedValues:
-      - qa
-      - prod
-  AdditionalGPOs:
-    Type: String
-    Description: An array of GPOs that are separated by commas. i.e. GPO-App-4289-Prod-Unix-Filter, GPO-App-4289-Prod-Unix-Filter
-  AutoSysFlag:
-    Type: "String"
-    Default: 'no'
-    AllowedValues:
-      - 'no'
-      - 'yes'
-    Description: Whether or not to install AutoSys
-  EDOLoBNm:
-    Type: String
-    Description: Line Of Business Name
-    # Default: EDO-CE
-    AllowedValues:
-      - daes
-      - cl
-      - pl
-      - gb
-      - ent
-      - clm
-      - dgtl
-      - hf
-      - hr
-      - ops
-      - hmco
-      - 3pd
-      - clact
-      - clmds
-      - plact
-      - plbi
-      - clds
-      - plds
-      - gbds
-  EDOApplNm:
-    Type: String
-    Description: Application Short Name
-    # Default: edoce
-    AllowedPattern: ^[a-z0-9]*$
-    MinLength: 3
-  EDOSDLCEnv:
-    Type: String
-    Description: SDLC Environment Name
-    Default: dev
-    AllowedValues:
-      - dev
-      - qat
-      - pte
-      - ppd
-      - prd
-  EDOApplWEId:
-    Type: String
-    Description: Application Work Effort (WE) / PPM Id
-    # Default: Dev
-  VpcId:
-    Type: 'AWS::EC2::VPC::Id'
-    Description: VPC to provision the instances
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet to deploy EC2 instance into
+  SecurityGroupId:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: List of Security Groups to add to EC2 instance
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: >-
+      Name of an existing EC2 KeyPair to enable SSH access to the instance
   InstanceType:
     Type: String
     Description: Type of instance
-    Default: t3a.nano
+    Default: t3.micro
     AllowedValues:
       - t3.nano
       - t3.micro
@@ -93,206 +35,54 @@ Parameters:
       - r5.12xlarge
       - r5.16xlarge
       - r5.24xlarge
-  # KeyName:
-  #   Type: String
-  #   Description: Optional key pair name to associate to the instance
-  #   Default: ''
-  ELBVolumeSize:
-    Type: Number
-    Default: 90
-    Description: Size of the ELB volumes for the instances (in GB) Minimum is 60
-    MinValue: 60
-  # ImageToUse:
-  #   Type: String
-  #   Description: >-
-  #     latest = stock Amazon Linux 2 AMI, hig = HIG-hardened AMI, custom = Custom
-  #     AMI ID provided in ImageId
-  #   Default: custom
-  #   AllowedValues:
-  #     - latest
-  #     # - hig
-  #     - custom
-  EDOImageIdToUse:
+  Env:
     Type: String
-    Description: EDOCE-hardened AMI image to use
-    Default: image/al2
+    Description: Environment Type
+    Default: test
     AllowedValues:
-      - image/al2
-      - image/rhel7
-      - image/rhel8
-  EDOImageIdSsmParamPath:
-    Type: "AWS::SSM::Parameter::Value<String>"
-    Description: EDOCE latest image to use. eg. /HIG/EDO/BASE/EC2/NP/al2-ami Replace as needed if rhel7 NP/rhel7-ami, NP/rhel8-ami
-    Default: /HIG/EDO/BASE/EC2/NP/al2-ami
-    # AllowedValues:
-    #   - "/HIG/EDO/BASE/EC2/NP/al2-ami"
-    #   - "/HIG/EDO/BASE/EC2/NP/rhel7-ami"
-    #   - "/HIG/EDO/BASE/EC2/NP/rhel8-ami"
-  # DeviceName:
-  #   Type: String
-  #   Description: >-
-  #     EBS block device name (must be /dev/xvda if using Amazon Linux 2 or
-  #     /dev/sda1 if using RHEL)
-  #   Default: /dev/xvda
-  #   MinLength: 0
-  EnvironmentType:
-    Type: String
-    Description: Instance environment type
-    Default: NONPROD
-    AllowedValues:
-      - DR
-      - PROD
-      - NONPROD
-      - PREPROD
-  DataClassification:
-    Type: String
-    Description: Instance data classification
-    Default: NonConfidential
-    AllowedValues:
-      - NonConfidential
-      - CompanyConfidential
-      - HighlyRestricted
+      - test
+      - prod
 
-Metadata:
-  AWS::CloudFormation::Interface:
-    ParameterGroups:
-      - Label:
-          default: Application Configuration
-        Parameters:
-          - AppId
-          - EnvironmentType
-          - DataClassification
-      # - Label:
-      #     default: Image Configuration
-      #   Parameters:
-      #     - ImageToUse
-      #     - ImageId
-      #     - HIGImageId
-      #     - LatestImageId
-      - Label:
-          default: Instance Configuration
-        Parameters:
-          - InstanceType
-          - EDOImageIdToUse
-          - EDOImageIdSsmParamPath
-          - ELBVolumeSize
-          # - KeyName
-          - VpcId
-      - Label:
-          default: Ansible Configuration
-        Parameters:
-          - AnsibleEnvironment
-          - AdditionalGPOs
-          - AutoSysFlag
-          # - WorkflowId
-          # - SsmDoc
 Resources:
-  LambdaPrimer:
-    Type: AWS::CloudFormation::CustomResource
-    Properties:
-      ServiceToken: !Sub arn:aws:lambda:us-east-1:${AWS::AccountId}:function:edo-np-hub-lmd-svc-001
-      appId: !Ref AppId
-      serviceName: compute
   Instance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceInitiatedShutdownBehavior: terminate
-      BlockDeviceMappings:
-        - DeviceName: !If #!Ref DeviceName
-            - DeviceNameAl
-            - /dev/xvda
-            - !If
-              - DeviceNameRl7
-              - /dev/sda1
-              - !If
-                - DeviceNameRl8
-                - /dev/sda1
-                - /dev/sda1
-          Ebs:
-            DeleteOnTermination: true
-            Encrypted: true
-            KmsKeyId: !Sub >-
-              arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/ami
-            VolumeSize: !Ref ELBVolumeSize
-            VolumeType: gp2
       IamInstanceProfile: !Ref InstanceProfile
-      SubnetId:
-        "Fn::Transform":
-          Name: GetStringList
-          Parameters:
-            ParameterName: app/SubnetIds
-            Selection:
-              - 0
-            Random: true
-            StringList: true
-      SecurityGroupIds:
-        - !Ref InstanceSecurityGroup
-        - !Sub '{{resolve:ssm:/HIG/${VpcId}/SG-Default:1}}'
       EbsOptimized: true
-      # KeyName: !If 
-      #   - HasKeyName
-      #   - !Ref KeyName
-      #   - !Ref 'AWS::NoValue'
       SourceDestCheck: true
-      ImageId: !If
-        - DeviceNameAl
-        # - !Sub '{{resolve:ssm:/HIG/EDO/BASE/EC2/NP/al2-base-ami:1}}'
-        - !Ref EDOImageIdSsmParamPath
-        # - "Fn::Transform":
-        #     Name: EdoSSM
-        #     Parameters:
-        #       Key: NP/al2-base-ami
-        - !If
-          - DeviceNameRl7
-          # - !Sub '{{resolve:ssm:/HIG/EDO/BASE/EC2/NP/al2-base-ami:1}}'
-          - !Ref EDOImageIdSsmParamPath
-          # - "Fn::Transform":
-          #     Name: EdoSSM
-          #     Parameters:
-          #       Key: NP/rhel7-base-ami
-          - !If
-            - DeviceNameRl8
-            # - !Sub '{{resolve:ssm:/HIG/EDO/BASE/EC2/NP/rhel8-base-ami:1}}'
-            - !Ref EDOImageIdSsmParamPath
-            # - "Fn::Transform":
-            #     Name: EdoSSM
-            #     Parameters:
-            #       Key: NP/rhel8-base-ami
-            # - !Sub '{{resolve:ssm:/HIG/EDO/BASE/EC2/NP/rhel8-base-ami:1}}'
-            - !Ref EDOImageIdSsmParamPath
+      ImageId: ami-0bcf5425cdc1d8a85
+      KeyName: !Ref KeyName
       InstanceType: !Ref InstanceType
-      Monitoring: false
-      Tags:
-        - Key: Name
-          Value: !Sub "${LambdaPrimer.name}${LambdaPrimer.Id}"
-          # Value: !Sub "edonphubvml${LambdaPrimer.Id}"
-        - Key: Hostname
-          Value: !Sub "${LambdaPrimer.name}${LambdaPrimer.Id}"
-        - Key: hig-billing
-          Value: !Sub 'APP-${AppId}'
-        - Key: hig-planit-appid
-          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
-        - Key: hig-environment-type
-          Value: !Ref EnvironmentType
-        - Key: hig-data-classification
-          Value: !Ref DataClassification
-        - Key: EDO-LoB-Nm
-          Value: !Ref EDOLoBNm
-        - Key: EDO-Appl-Nm
-          Value: !Ref EDOApplNm
-        - Key: EDO-SDLC-Env
-          Value: !Ref EDOSDLCEnv
-        - Key: EDO-Appl-WE-Id
-          Value: !Ref EDOApplWEId
+      Monitoring: true
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: "true"
+          DeleteOnTermination: true
+          DeviceIndex: 0
+          GroupSet: 
+            - !Ref SecurityGroupId
+          SubnetId: !Ref SubnetId
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          AWS_AVAIL_ZONE=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
-          AWS_INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-          ROOT_VOLUME_IDS=$(aws ec2 describe-instances --region ${AWS::Region} --instance-id $AWS_INSTANCE_ID --output text --query Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId)
-          aws ec2 create-tags --resources $ROOT_VOLUME_IDS --region ${AWS::Region} --tags Key=hig-billing,Value=APP-${AppId} Key=hig-planit-appid,Value=APP-${AppId}-${EnvironmentType} Key=hig-environment-type,Value=${EnvironmentType} Key=hig-data-classification,Value=${DataClassification} Key=EDO-LoB-Nm,Value=${EDOLoBNm} Key=EDO-Appl-Nm,Value=${EDOApplNm} Key=EDO-SDLC-Env,Value=${EDOSDLCEnv} Key=EDO-Appl-WE-Id,Value=${EDOApplWEId} Key=Name,Value=${LambdaPrimer.name}${LambdaPrimer.Id}
-          aws ssm start-automation-execution --document-name arn:${AWS::Partition}:ssm:${AWS::Region}:622325239849:document/SSMLinuxPostBuild-Test-SSMGoldLinuxBuild-FTG5WMWST74U --parameters "AutomationAssumeRole=arn:aws:iam::${AWS::AccountId}:role/AutomationServiceRole,InstanceId=$AWS_INSTANCE_ID,AdditionalGPOs=${AdditionalGPOs},AnsibleEnvironment=${AnsibleEnvironment},AutoSysFlag=${AutoSysFlag},Envname=${EnvironmentType},Inventory=85,OsType=linux,Snappid=APP-${AppId},Region=${AWS::Region},StackName=${LambdaPrimer.name}${LambdaPrimer.Id},TagHIGAccountParameter=${AWS::AccountId},WorkflowId=1031"
-          
+        Fn::Base64: 
+          !Sub |
+              #!/bin/bash -ex
+              amazon-linux-extras install epel
+              yum update -y
+              yum install ansible -y
+              yum install git -y
+              curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash
+              export NVM_DIR="$HOME/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+              nvm install node
+              cat <<EOF >> /home/ec2-user/.bashrc
+              export NVM_DIR="/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+              EOF
+              cd /home/ec2-user
+              mkdir server && cd server
+              npm install express
+      Tags:
+        - Key: Env
+          Value: !Sub ${Env}
 
   InstanceIamRole:
     Type: AWS::IAM::Role
@@ -304,8 +94,6 @@ Resources:
               Service:
                 - ec2.amazonaws.com
                 - ssm.amazonaws.com
-#                - secretsmanager.amazonaws.com
-#                - cloudformation.amazonaws.com
             Action: 'sts:AssumeRole'
       Policies:
         - PolicyName: SSMInstanceProfileS3Policy
@@ -315,174 +103,43 @@ Resources:
               - Effect: Allow
                 Action: 's3:GetObject'
                 Resource:
-                  - !Sub >-
-                    arn:${AWS::Partition}:s3:::amazoncloudwatch-agent-${AWS::Region}/*
-                  - !Sub 'arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*'
-                  - !Sub >-
-                    arn:${AWS::Partition}:s3:::aws-windows-downloads-${AWS::Region}/*
-                  - !Sub 'arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*'
-                  - !Sub >-
-                    arn:${AWS::Partition}:s3:::amazon-ssm-packages-${AWS::Region}/*
-                  - !Sub 'arn:${AWS::Partition}:s3:::${AWS::Region}-birdwatcher-prod/*'
-                  - !Sub >-
-                    arn:${AWS::Partition}:s3:::aws-ssm-document-attachments-${AWS::Region}/*
-                  - !Sub >-
-                    arn:${AWS::Partition}:s3:::patch-baseline-snapshot-${AWS::Region}/*
-                  - !Sub >-
-                    arn:${AWS::Partition}:s3:::amazonlinux.${AWS::Region}.amazonaws.com/*
-                  - !Sub >-
-                    arn:aws:s3:::edo-np-hub-s3-edoce-binaries/*
+                  - !Sub arn:${AWS::Partition}:s3:::amazoncloudwatch-agent-${AWS::Region}/*
+                  - !Sub arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*
+                  - !Sub arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*
+                  - !Sub arn:${AWS::Partition}:s3:::amazonlinux.${AWS::Region}.amazonaws.com/*
               - Effect: Allow
                 Action:
                   - 'ec2:Describe*'
                   - 'ec2:CreateTags'
                   - 'ec2:ModifyInstanceMetadataOptions'
-                  - 'ssm:StartAutomationExecution'
                   - 'cloudformation:SignalResource'
-                  - 'secretsmanager:GetResourcePolicy'
-                  - 'secretsmanager:GetSecretValue'
-                  - 'secretsmanager:DescribeSecret'
-                  - 'secretsmanager:ListSecretVersionIds'
                   - 'iam:PassRole'
                   - 'ssm:DescribeInstanceInformation'
                   - 'ssm:*'
                 Resource: '*'
-              - Sid: RequireIMDSv2
-                Effect: Deny
-                Action: '*'
-                Resource: '*'
-                Condition:
-                  NumericLessThan:
-                    'ec2:RoleDelivery': '2.0'
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMDirectoryServiceAccess'
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaRole'
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonRoute53FullAccess'
       Tags:
-        - Key: hig-billing
-          Value: !Sub 'APP-${AppId}'
-        - Key: hig-planit-appid
-          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
-        - Key: hig-environment-type
-          Value: !Ref EnvironmentType
-        - Key: hig-data-classification
-          Value: !Ref DataClassification
-        - Key: EDO-LoB-Nm
-          Value: !Ref EDOLoBNm
-        - Key: EDO-Appl-Nm
-          Value: !Ref EDOApplNm
-        - Key: EDO-SDLC-Env
-          Value: !Ref EDOSDLCEnv
-        - Key: EDO-Appl-WE-Id
-          Value: !Ref EDOApplWEId
+        - Key: Env
+          Value: !Sub ${Env}
     CreationPolicy: 
       ResourceSignal: 
         Count: 1
-        Timeout: PT30M
-  InstanceSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: !Sub 'APP-${AppId} Instances'
-      SecurityGroupIngress:
-        - Description: permit SSH from HIG Internal IPs
-          IpProtocol: tcp
-          FromPort: 22
-          SourcePrefixListId: '{{resolve:ssm:/HIG/Network/PrefixList/Internal:1}}'
-          ToPort: 22
-        - Description: permit All TCP from HIG Internal IPs
-          IpProtocol: '-1'
-          FromPort: 0
-          CidrIp: 0.0.0.0/0
-          ToPort: 65535
-      Tags:
-        - Key: hig-billing
-          Value: !Sub 'APP-${AppId}'
-        - Key: hig-planit-appid
-          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
-        - Key: hig-environment-type
-          Value: !Ref EnvironmentType
-        - Key: hig-data-classification
-          Value: !Ref DataClassification
-        - Key: EDO-LoB-Nm
-          Value: !Ref EDOLoBNm
-        - Key: EDO-Appl-Nm
-          Value: !Ref EDOApplNm
-        - Key: EDO-SDLC-Env
-          Value: !Ref EDOSDLCEnv
-        - Key: EDO-Appl-WE-Id
-          Value: !Ref EDOApplWEId
-      VpcId: !Ref VpcId
+        Timeout: PT30M'
+
   InstanceProfile:
     Type: 'AWS::IAM::InstanceProfile'
     Properties:
-      Path: /hig/
+      Path: !Sub /${Env}/
       Roles:
         - !Ref InstanceIamRole
-Rules:
-  ValidateAppId:
-    Assertions:
-      - Assert: !Not 
-          - !Equals 
-            - !Ref AppId
-            - ''
-        AssertDescription: AppId is required
-  ValidateVpcId:
-    Assertions:
-      - Assert: !Not 
-          - !Equals 
-            - !Ref VpcId
-            - ''
-        AssertDescription: VpcId is required
-  # ValidateImageToUseLatest:
-  #   RuleCondition: !Equals 
-  #     - !Ref ImageToUse
-  #     - latest
-  #   Assertions:
-  #     - Assert: !Not 
-  #         - !Equals 
-  #           - !Ref LatestImageId
-  #           - ''
-  #       AssertDescription: 'If ImageToUse is latest, LatestImageId cannot be empty'
-  # ValidateImageToUseCustom:
-  #   RuleCondition: !Equals 
-  #     - !Ref ImageToUse
-  #     - custom
-  #   Assertions:
-  #     - Assert: !Not 
-  #         - !Equals 
-  #           - !Ref ImageId
-  #           - ''
-  #       AssertDescription: 'If ImageToUse is custom, ImageId cannot be empty'
 
-
-Conditions:
-  # UseLatestImageId: !Equals 
-  #   - !Ref ImageToUse
-  #   - latest
-  # UseHIGImage: !Equals 
-  #   - !Ref ImageToUse
-  #   - hig
-  # HasKeyName: !Not 
-  #   - !Equals 
-  #     - !Ref KeyName
-  #     - ''
-  DeviceNameAl: !Equals
-    - !Ref EDOImageIdToUse
-    - image/al2
-  DeviceNameRl7: !Equals
-    - !Ref EDOImageIdToUse
-    - image/rhel7
-  DeviceNameRl8: !Equals
-    - !Ref EDOImageIdToUse
-    - image/rhel8
-  # DeviceNameAl: !Equals
-  #   - !Ref EDOImageIdToUse
-  #   - /HIG/EDO/BASE/EC2/NP/al2-ami
-  # DeviceNameRl7: !Equals
-  #   - !Ref EDOImageIdToUse
-  #   - /HIG/EDO/BASE/EC2/NP/rhel7-ami
-  # DeviceNameRl8: !Equals
-  #   - !Ref EDOImageIdToUse
-  #   - /HIG/EDO/BASE/EC2/NP/rhel8-ami
+Outputs:
+  ec2Id:
+    Description: EC2 Instance Id
+    Value: !Ref Instance
+    Export:
+      Name: !Sub "${AWS::StackName}-instance-id"

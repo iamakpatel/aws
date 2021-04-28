@@ -1,0 +1,8 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+    - name: Install MySQL
+      action: apt pkg=$item state=installed
+      with_items:
+        - mysql-client

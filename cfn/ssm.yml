@@ -1,0 +1,277 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  DO NOT DELETE - SSM Parameters for EMR Persistent
+
+Resources:
+  EmrPcKms02:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/ent-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/7410df8d-7474-4698-992f-224788a0ee56
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms03:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/ent-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/80ce4138-c3aa-42b5-9b99-e5c75d78795f
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms04:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/cl-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/535cc3d5-2553-4b96-818c-b849a767e6e4
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms05:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/cl-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/af9f11e1-c4c2-446c-b28a-b97a0954a122
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms06:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/3pd-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/aa8974d4-131e-40d5-9ff3-e51926dbcc77
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms07:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/3pd-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/36fa0f9a-5f55-43aa-b7f2-be9b939f8e0e
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms08:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clact-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/5996023f-c410-4860-b8fa-fef9fa635446
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms09:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clact-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/dc0daf8b-17f4-4284-9fed-a7b4132ec57b
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms10:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clm-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/64a564ec-4bd9-47aa-b426-ea060dd33957
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms11:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clm-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/e881847f-c322-4356-8f97-a93a51261f09
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms12:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clmds-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/4f7f2af7-60f2-4716-9014-4001525bab80
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms13:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clmds-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/65ca41aa-8bbc-4f60-98bf-0102f4038938
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms14:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/daes-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/08d8d3eb-3445-40a0-87be-a3003e959755
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms15:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/gb-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/0b675d0c-6405-43b9-bd3d-750928354050
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms16:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/gb-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/da5f2df8-914e-45b6-bae0-72255125d221
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms17:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/gbds-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/63ce2e83-4e71-4edd-a4c6-eb78a04bf6d7
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms18:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/gbds-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/65746398-f9f9-4adf-9514-7ca3df051dd0
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms19:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/hf-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/0693a125-d364-4944-ae35-0afbfa30a54b
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms20:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/hf-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/1293e9b8-1f72-440c-b9f6-197b5432868f
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms21:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/hmco-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/85618adf-e5dc-4f4f-a780-fe8018164c14
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms22:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/hmco-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/3213c5bf-3945-423a-88a8-02cbbb9fccce
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms23:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/hr-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/055c2f9a-e074-4d73-a7c2-aa4de4e356c8
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms24:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/hr-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/853390bf-5987-47db-8deb-25b2bdb27a0d
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms25:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/pl-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/4e80d525-5174-48bb-aa58-e9d72c5e8a31
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms26:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/pl-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/29e2d97d-9411-4d36-85b1-64f0d2e5d2d8
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms27:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/plact-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/1b4e1ed4-6914-4d6a-ac82-984845d13f59
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms28:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/plact-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/144e2120-a078-4df7-b2ea-293cb39fcb54
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms29:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/plbi-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/80729efb-2423-452c-b3f9-3345ab91ec3a
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms30:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/plbi-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/db81552d-2fe0-48f9-a412-4ba0c7a88f2e
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms31:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/plds-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/358d6483-9f64-4f40-a1f2-a73280a29d22
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms32:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/plds-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/c66ab5f7-6df6-46e2-a17c-ca50b4a65d33
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms33:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/user-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/1598ada2-b288-40b6-af7f-75067c9f0a0f
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms34:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clds-prd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/1e966cc3-39ad-438c-87e7-f03de9083a1b
+      Description: DO NOT DELETE - KMS key for Data bucket
+      
+  EmrPcKms35:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /HIG/EDO/BASE/EMR/S3/clds-ppd-kms
+      Type: String
+      Value: arn:aws:kms:us-east-1:034877050945:key/c6d8bc84-1b37-4555-9cc7-2ba3eecb9099
+      Description: DO NOT DELETE - KMS key for Data bucket
+      

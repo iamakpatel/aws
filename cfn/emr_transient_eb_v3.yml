@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Provisions EventBridge in BD and DATA Account for Transient Job
+Parameters:
+  AppName:
+    Type: String
+    Description: Application Name
+  Env:
+    Type: String
+    AllowedValues:
+      - dev
+      - qat
+  Lob:
+    Type: String
+    AllowedValues:
+      - cl
+      - plgb
+      - clm
+      - hr
+      - dgtl
+      - ops
+      - hmco
+      - 3pd
+      - ent
+      - clact
+      - plact
+      - clds
+      - plds
+      - gbds
+      - clmds
+      - plbi
+  PlanIt:
+    Type: String
+    Description: Provide Planit number for app
+  PrimaryDL:
+    Type: String
+    Description: App Team email DL for Cluster Events notification. HadoopAdmin will always gets notified.
+    AllowedPattern: >-
+      ([a-zA-Z0-9_\-\.]+)@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.)|(([a-zA-Z0-9\-]+\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\]?)
+    ConstraintDescription: must be a valid email address.
+  SecondaryDL:
+    Type: String
+    Description: (Optional) Additional email DL for Cluster Events notification.
+    AllowedPattern: >-
+      ([a-zA-Z0-9_\-\.]+)@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.)|(([a-zA-Z0-9\-]+\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\]?)
+    Default: "xx@thehartford.com"
+
+Conditions:
+  IsSecondEmailProvided: !Not [ !Equals ["xx@thehartford.com", !Ref SecondaryDL]]
+  IsValidEnv: !Equals ["xx@thehartford.com", !Ref SecondaryDL]
+
+Resources:
+  BdRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub edo-np-bd-eb-${Env}-${Lob}-${AppName}
+      Description: 'AWS EventBridge rule to push event into event bus of BD Account'
+      EventBusName: edo-np-bd-x-s3-event-bus
+      EventPattern:
+        source:
+          - 'aws.s3'
+        detail-type:
+          - 'AWS API Call via CloudTrail'
+        detail:
+          eventSource:
+            - s3.amazonaws.com
+          eventName:
+            - PutObject
+          requestParameters:
+            bucketName:
+              - !Sub edo-np-data-s3-${Lob}-${Env}-001
+            key:
+              - prefix: !Sub ${Env}/logs/${Lob}/${AppName}/
+      State: ENABLED
+      Targets:
+        - 
+          Id: bd-lambda-target
+          Arn: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:edo-np-bd-lmd-cfn-001
+          Input: !Sub '{"paramsFile": "s3://edo-np-hub-s3-edoce-artifacts/templates/emr/transient/params/${Env}/${Lob}/${AppName}/params.json"}'
+        -
+          Id: bd-sns-target
+          Arn: !Ref ruleTopic
+      #Tags: #EB Doesn't support tag for CFN
+      #  - Key: hig-planit-appid
+      #    Value: !Sub APP-${PlanIt}-EDO - Cloud Enablement Services 1.0
+      #  - Key: hig-billing
+      #    Value:  !Sub APP-${PlanIt}
+      #  - Key: hig-environment-type
+      #    Value: NONPROD
+      #  - Key: hig-data-classification
+      #    Value: CompanyConfidential
+      #  - Key: hig-owner
+      #    Value: EDOCECloudEnablement@thehartford.com
+      
+  ruleTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub edo-np-bd-topic-${Env}-${Lob}-${AppName}
+      Subscription: 
+        - Endpoint: !Ref PrimaryDL
+          Protocol: email
+        #- Endpoint: HadoopAdmin@thehartford.com #HadoopAdmin Email
+        #  Protocol: email
+      Tags:
+        - Key: hig-planit-appid
+          Value: !Sub APP-${PlanIt}-EDO - Cloud Enablement Services 1.0
+        - Key: hig-billing
+          Value:  !Sub APP-${PlanIt}
+        - Key: hig-environment-type
+          Value: NONPROD
+        - Key: hig-data-classification
+          Value: CompanyConfidential
+        - Key: hig-owner
+          Value: EDOCECloudEnablement@thehartford.com
+
+  SecondarySubscription:
+    Type: AWS::SNS::Subscription
+    Condition: IsSecondEmailProvided
+    Properties:
+      Endpoint: !Ref SecondaryDL
+      Protocol: email
+      TopicArn: !Ref ruleTopic
+
+  lambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: edo-np-bd-lmd-cfn-001
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn:
+        Fn::GetAtt:
+          - BdRule
+          - Arn
+
+  policyPermission:
+    Type: 'AWS::SNS::TopicPolicy'
+    DependsOn: BdRule
+    Properties:
+        PolicyDocument:
+            Statement:
+                - Effect: Allow
+                  Principal:
+                    Service: events.amazonaws.com
+                  Action: 'sns:Publish'
+                  Resource: '*'
+        Topics:
+            - !Ref ruleTopic
+
+  DataAccStackSet:
+    Type: AWS::CloudFormation::StackSet
+    Properties:
+      PermissionModel: SELF_MANAGED
+      StackSetName: !Sub ${AWS::StackName}
+      Parameters:
+        - ParameterKey: AppName
+          ParameterValue: !Ref AppName
+        - ParameterKey: Env
+          ParameterValue: !Ref Env
+        - ParameterKey: Lob
+          ParameterValue: !Ref Lob
+        - ParameterKey: PlanIt
+          ParameterValue: !Ref PlanIt
+      StackInstancesGroup:
+        - DeploymentTargets:
+            Accounts:
+              - "041519611154"
+          Regions:
+            - us-east-1
+      TemplateBody: |
+        AWSTemplateFormatVersion: "2010-09-09"
+        Description: EMR Transient - Event Bridge rule in DATA Account
+        Parameters:
+          AppName:
+            Type: String
+          Env:
+            Type: String
+          Lob:
+            Type: String
+          PlanIt:
+            Type: String
+        Resources:
+          DataRule:
+            Type: AWS::Events::Rule
+            Properties:
+              Name: !Sub edo-np-bd-eb-${Env}-${Lob}-${AppName}
+              Description: 'AWS EventBridge rule to push event into event bus of BD Account'
+              EventPattern:
+                source:
+                  - 'aws.s3'
+                detail-type:
+                  - 'AWS API Call via CloudTrail'
+                detail:
+                  eventSource:
+                    - s3.amazonaws.com
+                  eventName:
+                    - PutObject
+                  requestParameters:
+                    bucketName:
+                      - !Sub edo-np-data-s3-${Lob}-${Env}-001
+                    key:
+                      - prefix: !Sub ${Env}/logs/${AppName}/
+              State: ENABLED
+              Targets:
+                - 
+                  Id: event-bus-bd-target
+                  Arn: !Sub arn:aws:events:us-east-1:357555245473:event-bus/edo-np-bd-x-s3-event-bus
+                  RoleArn: arn:aws:iam::041519611154:role/service-role/edo-np-data-x-event-rule-resource-role
+              #Tags:
+              #  - Key: hig-planit-appid
+              #    Value: !Sub APP-${PlanIt}-EDO - Cloud Enablement Services 1.0
+              #  - Key: hig-billing
+              #    Value:  !Sub APP-${PlanIt}
+              #  - Key: hig-environment-type
+              #    Value: NONPROD
+              #  - Key: hig-data-classification
+              #    Value: CompanyConfidential
+              #  - Key: hig-owner
+              #    Value: EDOCECloudEnablement@thehartford.com
+
+Outputs:
+  TopicArn: 
+    Description: Arn for SNS topic to notify application
+    Export:
+      Name: !Sub edo-np-bd-topic-${Env}-${Lob}-${AppName}-arn
+    Value: !Ref ruleTopic

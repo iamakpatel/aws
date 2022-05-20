@@ -1,0 +1,474 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Template to deploy an EKS cluster
+
+# https://medium.com/swlh/aws-cloudformation-managed-complete-ecs-infrastructure-including-ci-cd-pipeline-from-github-to-ecs-b833bb44e01c
+
+Metadata:
+  "AWS::CloudFormation::Interface":
+    ParameterGroups:
+      - Label:
+          default: "Application Configuration"
+        Parameters:
+          - AppId
+          - EnvironmentType
+          - DataClassification
+      - Label:
+          default: "Cluster Configuration"
+        Parameters:
+          - ClusterName
+          - KubVersion
+          - VpcId
+          - Subnets
+Parameters:
+  AppId:
+    Type: String
+    Description: PlanIT application ID number, excludes APP- (ex. "4646")
+  EnvironmentType:
+    Type: String
+    Description: Environment type
+    Default: NONPROD
+    AllowedValues:
+      - DR
+      - PROD
+      - NONPROD
+      - PREPROD
+  DataClassification:
+    Type: String
+    Description: Data classification
+    Default: NonConfidential
+    AllowedValues:
+      - NonConfidential
+      - CompanyConfidential
+      - HighlyRestricted
+  ClusterName:
+    Type: String
+    Description: Name of the Cluster
+  KubVersion:
+    Type: String
+    Description: Kubernetes Version
+    AllowedValues:
+      - 1.14
+      - 1.15
+      - 1.16
+      - 1.17
+      - 1.18
+      - 1.19
+  VpcId:
+    Type: String
+    Description: VPC to provision the application
+  Subnets:
+    Type: CommaDelimitedList
+    Description: Application subnet IDs
+  StageName:
+    Type: String
+    Default: dev
+    Description: Name of the deployment stage
+  EDOLoBNm:
+    Type: String
+    Description: Line Of Business Name
+  EDOApplNm:
+    Type: String
+    Description: Application Short Name
+  EDOSDLCEnv:
+    Type: String
+    Description: SDLC Environment Name
+  EDOApplWEId:
+    Type: String
+    Description: Application Work Effort (WE) / PPM Id
+Rules:
+  ValidateAppId:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref AppId, ""]]
+        AssertDescription: "AppId is required"
+  ValidateVpcId:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref VpcId, ""]]
+        AssertDescription: "VpcId is required"
+
+Mappings:
+  PrefixListMap:
+    "us-east-1":
+      higint: "pl-054125649fc327f05" # com.hartford.internal
+    "us-east-2":
+      higint: "pl-009f1eba59f0cd128" # com.hartford.internal
+    "eu-west-2":
+      higint: "pl-00101179e0fe6191f" # com.hartford.internal
+
+Resources:
+  eksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Tags:
+        - Key: hig-billing
+          Value: !Sub 'APP-${AppId}'
+        - Key: hig-planit-appid
+          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
+        - Key: hig-environment-type
+          Value: !Ref EnvironmentType
+        - Key: hig-data-classification
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+  ClusterSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: !Sub "APP-${AppId}-${StageName} EKS Cluster"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvironmentType}"
+        - Key: "hig-environment-type"
+          Value: !Ref EnvironmentType
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+      VpcId: !Ref VpcId
+  EdgeSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: HTTP and HTTPS only access from HIG on premises CIDR ranges
+      SecurityGroupIngress:
+        - Description: "permit HTTP from HIG Internal IPs"
+          IpProtocol: tcp
+          FromPort: 80
+          SourcePrefixListId:
+            !FindInMap [PrefixListMap, !Ref "AWS::Region", higint]
+          ToPort: 80
+        - Description: "permit HTTPS from HIG Internal IPs"
+          IpProtocol: tcp
+          FromPort: 443
+          SourcePrefixListId:
+            !FindInMap [PrefixListMap, !Ref "AWS::Region", higint]
+          ToPort: 443
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvironmentType}"
+        - Key: "hig-environment-type"
+          Value: !Ref EnvironmentType
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+      VpcId: !Ref VpcId
+  UpdateClusterConfigLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Tags:
+        - Key: hig-billing
+          Value: !Sub 'APP-${AppId}'
+        - Key: hig-planit-appid
+          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
+        - Key: hig-environment-type
+          Value: !Ref EnvironmentType
+        - Key: hig-data-classification
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+  UpdateClusterConfigLambda:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: UpdateClusterConfigLambda
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "eks:UpdateClusterConfig"
+              - "eks:DescribeUpdate"
+              - "eks:ListUpdates"
+              - "logs:*"
+            Resource: "*"
+      Roles:
+        - !Ref UpdateClusterConfigLambdaRole
+  InstallUpdateClusterConfigLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import logging
+          import time
+          import uuid
+          import cfnresponse
+          import json
+          import boto3
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          def get_client(session, config):
+              return session.client('eks', config)
+          def delete_request_handler(event, context):
+            if 'ResponseURL' in event:
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, None, event['PhysicalResourceId'])
+            return none
+          def update_cluster_config(event):
+              eks_client = boto3.client('eks')
+              cluster_name = event["ResourceProperties"]["clusterName"]
+              update_type = event["ResourceProperties"]["update_type"]
+              if update_type == 'logging':
+                  response = check_for_existing_update(eks_client,cluster_name,'LoggingUpdate')
+                  if response is None:
+                      response = eks_client.update_cluster_config(
+                          name=cluster_name,
+                          logging={
+                              'clusterLogging': [
+                                  {
+                                      'types':['api', 'audit', 'authenticator', 'controllerManager', 'scheduler'],
+                                      'enabled': True
+                                  }
+                              ]
+                          }
+                      ).get('update',{})
+              elif update_type == 'private-endpoint':
+                  response = check_for_existing_update(eks_client,cluster_name,'EndpointAccessUpdate')
+                  if response is None:
+                       response = eks_client.update_cluster_config(
+                           name=cluster_name,
+                           resourcesVpcConfig={
+                               'endpointPublicAccess': False,
+                               'endpointPrivateAccess': True
+                           }
+                       ).get('update',{})
+              else:
+                  raise Exception('update_type: %s is not supported' % update_type)
+              update_id = response.get('id', None)
+              if update_id is not None:
+                  wait_for_cluster_update(eks_client, cluster_name, update_id)
+                  return
+              raise Exception('Error updating the cluster config')
+          def check_for_existing_update(eks_client, cluster_name, update_type):
+              updates = eks_client.list_updates(name=cluster_name)['updateIds']
+              for update_id in updates:
+                  update = eks_client.describe_update(name=cluster_name, updateId=update_id)['update']
+                  if update['type']==update_type:
+                      return update
+              return None
+          def wait_for_cluster_update(eks_client, cluster_name, update_id):
+              count = 0
+              while True:
+                  time.sleep(30)
+                  update = eks_client.describe_update(name=cluster_name, updateId=update_id)['update']
+                  status = update.get('status', '')
+                  if status == 'Successful':
+                      return
+                  elif status == 'Failed':
+                      raise Exception('Cluster Update Failed')
+                  elif status == 'Cancelled':
+                      raise Exception('Cluster Update Cancelled')
+                  if count > 30:
+                      raise Exception('Cluster Update Timed out')
+                  count += 1
+          def get_event_parameters(event):
+              cluster_name = event["ResourceProperties"]["clusterName"]
+              update_type = event["ResourceProperties"]["update_type"]
+              return cluster_name, update_type
+          def handler(event, context):
+            cluster_name, update_type = get_event_parameters(event)
+            logger.info('Recieved event: ' + json.dumps(event, indent=1))
+            if event.get('RequestType', '') == 'Delete':
+               return delete_request_handler(event, context)
+            physical_resource_id = event.get('PhysicalResourceId', str(uuid.uuid4()))
+            cluster_name = event["ResourceProperties"]["clusterName"]
+            update_type = event["ResourceProperties"]["update_type"]
+            response_status = cfnresponse.SUCCESS
+            cluster_updated = update_cluster_config(event)
+            response_data = {"Success": cluster_updated}
+            if 'ResponseURL' in event:
+              cfnresponse.send(event, context, response_status,
+                        response_data, physical_resource_id)
+            logger.info('Response Data: ' + json.dumps(response_data, indent=1))
+            return response_data
+      Handler: index.handler
+      Role: !GetAtt UpdateClusterConfigLambdaRole.Arn
+      Runtime: "python3.7"
+      Timeout: 900
+      Tags:
+        - Key: hig-billing
+          Value: !Sub 'APP-${AppId}'
+        - Key: hig-planit-appid
+          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
+        - Key: hig-environment-type
+          Value: !Ref EnvironmentType
+        - Key: hig-data-classification
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+  EKSCluster:
+    Type: "AWS::EKS::Cluster"
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref KubVersion
+      RoleArn: !GetAtt eksClusterRole.Arn
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref ClusterSecurityGroup
+          - !Ref EdgeSecurityGroup
+        SubnetIds: !Ref Subnets
+      Tags:
+        - Key: hig-billing
+          Value: !Sub 'APP-${AppId}'
+        - Key: hig-planit-appid
+          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
+        - Key: hig-environment-type
+          Value: !Ref EnvironmentType
+        - Key: hig-data-classification
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+
+  PodExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Tags:
+        - Key: hig-billing
+          Value: !Sub 'APP-${AppId}'
+        - Key: hig-planit-appid
+          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
+        - Key: hig-environment-type
+          Value: !Ref EnvironmentType
+        - Key: hig-data-classification
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "eks-fargate-pods.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: "/hig/"
+      PermissionsBoundary: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/PermissionBoundary" # can't use SSM resolve here
+      Policies:
+        - PolicyName: EKSPodsExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ecr:GetAuthorizationToken"
+                  - "logs:CreateLogStream"
+                  - "logs:CreateLogGroup"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:GetDownloadUrlForLayer"
+                  - "ecr:BatchGetImage"
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "aws:sourceVpc": !Ref VpcId
+              - Effect: Allow
+                Action: "secretsmanager:GetSecretValue"
+                Resource: "arn:aws:secretsmanager:us-east-1:293176983353:secret:nexus-8ZgQUY" # Nexus credential in CodePipeline account
+              - Effect: Allow
+                Action: "kms:Decrypt"
+                Resource: "arn:aws:kms:us-east-1:293176983353:key/8d2c5b09-bc83-4b76-aee7-7c47e9076dfa" # backing key for above credentials
+  EnableControlPlaneLogs1:
+    DependsOn: EKSCluster
+    Type: Custom::EnableControlPlaneLogs
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - InstallUpdateClusterConfigLambda
+          - Arn
+      clusterName:
+        Ref: ClusterName
+      update_type: "logging"
+Outputs:
+  RoleArn:
+    Description: The role that Amazon EKS will use to create AWS resources for Kubernetes clusters
+    Value: !GetAtt eksClusterRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn"
+  ClusterArn:
+    Description: EKS Cluster ARN
+    Value: !GetAtt EKSCluster.Arn
+
+  EksCluster:
+    Description: A reference to the EKS Cluster
+    Value: !Ref EKSCluster
+
+  EksClusterName:
+    Description: EKS Cluster Name
+    Value: !Ref ClusterName
+
+  EksClusterEndpoint:
+    Description: EKS Cluster Endpoint
+    Value: !GetAtt EKSCluster.Endpoint
+
+  EksClusterCAData:
+    Description: EKS Cluster CertificateAuthorityData
+    Value: !GetAtt EKSCluster.CertificateAuthorityData
+  EKSClusterSecurityGroupID:
+    Description:  EKS Cluster Control Plane Security Group ID
+    Value: !GetAtt ClusterSecurityGroup.GroupId

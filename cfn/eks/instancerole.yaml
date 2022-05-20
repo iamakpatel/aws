@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates the Worker Node Instance Role and Profile
+Parameters:
+  AppId:
+    Type: String
+    Description: PlanIT application ID number, excludes APP- (ex. "4646")
+  EnvironmentType:
+    Type: String
+    Description: Database environment type
+  DataClassification:
+    Type: String
+    Description: Data classification
+  EDOLoBNm:
+    Type: String
+    Description: Line Of Business Name
+  EDOApplNm:
+    Type: String
+    Description: Application Short Name
+  EDOSDLCEnv:
+    Type: String
+    Description: SDLC Environment Name
+  EDOApplWEId:
+    Type: String
+    Description: Application Work Effort (WE) / PPM Id
+Resources:
+  NodeInstanceRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Tags:
+        - Key: hig-billing
+          Value: !Sub 'APP-${AppId}'
+        - Key: hig-planit-appid
+          Value: !Sub 'APP-${AppId}-${EnvironmentType}'
+        - Key: hig-environment-type
+          Value: !Ref EnvironmentType
+        - Key: hig-data-classification
+          Value: !Ref DataClassification
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref EDOApplNm
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      RoleName: !Sub "eks-node-instance-role-${AppId}"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+        - "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+        - "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        - "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+      Policies:
+        - PolicyName: "CLuster-autoscaling-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "autoscaling:SetDesiredCapacity"
+                  - "autoscaling:TerminateInstanceInAutoScalingGroup"
+                  - "autoscaling:DescribeTags"
+                  - "autoscaling:DescribeAutoScalingInstances"
+                  - "autoscaling:DescribeAutoScalingGroups"
+                Resource: "*"
+        - PolicyName: "SystemMangerPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "cloudwatch:PutMetricData"
+                  - "ssm:*"
+                  - "ssmmessages:OpenControlChannel"
+                  - "ssmmessages:OpenDataChannel"
+                  - "ssmmessages:CreateControlChannel"
+                  - "ssmmessages:CreateDataChannel"
+                  - "ec2messages:AcknowledgeMessage"
+                  - "ec2messages:DeleteMessage"
+                  - "ec2messages:FailMessage"
+                  - "ec2messages:GetEndpoint"
+                  - "ec2messages:GetMessages"
+                  - "ec2messages:SendReply"
+                Resource: "*"
+        - PolicyName: "AccesstoEBSKMS"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "kms:Decrypt"
+                  - "kms:GenerateDataKey*"
+                  - "kms:DescribeKey"
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    "kms:RequestAlias": "alias/*ebsdefault*"
+      Path: /
+  NodeInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+#      InstanceProfileName: !Sub "eks-instance-profile-${AppId}"
+      Path: /
+      Roles:
+        - Ref: NodeInstanceRole
+Outputs:
+  NodeInstanceRoleArn:
+    Description: "The node instance Arn"
+    Value: !GetAtt NodeInstanceRole.Arn
+  NodeInstanceRoleProfile:
+    Description: "The ARn of node instance role profile"
+    Value: !GetAtt NodeInstanceProfile.Arn
+

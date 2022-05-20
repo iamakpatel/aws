@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  DO NOT DELETE - Stack for Snowflak Keypair
+Parameters:
+  SubnetId:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet to deploy EC2 instance into
+  SecurityGroupId:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: List of Security Groups to add to EC2 instance
+Resources:
+  KeypairLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Tags:
+        - Key: hig-planit-appid
+          Value: APP-4708-EDO - Cloud Enablement Services 1.0
+        - Key: hig-billing
+          Value: APP-4708
+        - Key: hig-environment-type
+          Value: NONPROD
+        - Key: hig-data-classification
+          Value: CompanyConfidential
+        - Key: hig-owner
+          Value: EDOCECloudEnablement@thehartford.com
+      RoleName: edonphub-role-lmd-keypair-rw-002
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /service-role/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
+      Policies:
+        - PolicyName: edonphub-policy-lmd-keypair-rw-002
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Sid: "KeyPair1"
+                Action:
+                  - kms:Decrypt
+                  - ec2:DescribeInstances
+                  - kms:Encrypt
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                Resource: "*"
+              - Effect: Allow
+                Sid: Keypair3
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:hig/edo/secure/snowflake/*
+  KeypairLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: edonphub-lmd-snowflake-keypair-003
+      Role: !GetAtt keypairLambdaRole.Arn
+      Description: DO NOT DELETE - Generate KeyPair for Snowflake
+      Timeout: 900
+      MemorySize: 256
+      TracingConfig: 
+        Mode: Active
+      VpcConfig:
+        SecurityGroupIds: !Ref SecurityGroupId
+        SubnetIds: !Ref SubnetId
+      #Environment:
+      #  Variables:
+      #    key: value
+      Tags:
+        - Key: hig-planit-appid
+          Value: APP-4708-EDO - Cloud Enablement Services 1.0
+        - Key: hig-billing
+          Value: APP-4708
+        - Key: hig-environment-type
+          Value: NONPROD
+        - Key: hig-data-classification
+          Value: CompanyConfidential
+        - Key: hig-owner
+          Value: EDOCECloudEnablement@thehartford.com
+      Code:
+        ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/hig/keypair:latest
+  KeypairAuthLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: edonphub-lmd-snowflake-keypair-auth-003
+      Role: !GetAtt keypairLambdaRole.Arn
+      Description: DO NOT DELETE - Authorize API Gateway request
+      Timeout: 300
+      MemorySize: 128
+      TracingConfig: 
+        Mode: Active
+      VpcConfig:
+        SecurityGroupIds: !Ref SecurityGroupId
+        SubnetIds: !Ref SubnetId
+      #Environment:
+      #  Variables:
+      #    key: value
+      Tags:
+        - Key: hig-planit-appid
+          Value: APP-4708-EDO - Cloud Enablement Services 1.0
+        - Key: hig-billing
+          Value: APP-4708
+        - Key: hig-environment-type
+          Value: NONPROD
+        - Key: hig-data-classification
+          Value: CompanyConfidential
+        - Key: hig-owner
+          Value: EDOCECloudEnablement@thehartford.com
+      Code:
+        ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/hig/keypair_auth:latest
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    Properties: 
+        ApiKeySourceType: HEADER
+        Description: DO NOT DELETE - API for Snowflake Keypair
+        EndpointConfiguration:
+            Types: REGIONAL
+        Name: edonphub-api-snowflake-keypair-001
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+        ParentId: !GetAtt Api.RootResourceId
+        PathPart: 'keypair'
+        RestApiId: !Ref Api
+  ApiAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties: 
+        AuthorizerResultTtlInSeconds: 0
+        AuthorizerUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${KeypairLambda.Arn}/invocations'
+        IdentitySource: method.request.parameter.username,method.request.parameter.password
+        Name: edonphub-api-snowflake-keypair-authorizer-001
+        RestApiId: !Ref Api
+        Type: REQUEST
+  ApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+        ApiKeyRequired: true
+        AuthorizationType: CUSTOM
+        AuthorizerId: !Ref ApiAuthorizer
+        HttpMethod: POST
+        Integration:
+          IntegrationHttpMethod: POST
+          TimeoutInMillis: 29000
+          Type: AWS
+          Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${KeypairLambda.Arn}/invocations'
+        OperationName: 'lambda'
+        ResourceId: !Ref ApiResource
+        RestApiId: !Ref Api
+        

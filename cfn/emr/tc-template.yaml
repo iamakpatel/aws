@@ -1,0 +1,1486 @@
+AWSTemplateFormatVersion: '2010-09-09'
+##++++++++++++++++++++++++++++##
+##      /--- EMR CFN ---/     ##
+## Author: Santosh Palmurkar  ##
+## Version: 2.0               ##
+##++++++++++++++++++++++++++++##
+Description: Cloudformation template for creating EMR cluster
+Conditions:
+  WithSpotPrice:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: SpotPrice
+      - '0'
+##+++++++++++++++++++++##
+##---- Parameters -----##
+##+++++++++++++++++++++##
+Parameters:
+  EMRClusterName:
+    Type: String
+    Default: a4304Transient
+    
+  EnvType:
+    Type: String
+    AllowedValues:
+       - NONPROD
+       - PROD
+    
+  MasterInstanceType:
+    Description: Enter Instance type for the Master nodes
+    Type: String
+    Default: r5.xlarge
+    AllowedValues:
+        - m4.large
+        - m5.xlarge
+        - r5.xlarge
+        - r5.2xlarge
+        - r5.4xlarge
+        - r5.8xlarge
+        - m6g.xlarge
+        - m6g.2xlarge
+        - m6g.4xlarge
+        - m6g.8xlarge
+        - r6g.xlarge
+        - r6g.2xlarge 
+        - r6g.4xlarge
+        - r6g.8xlarge
+  CoreInstanceType:
+    Description: Enter Instance type for the Core nodes
+    Type: String
+    Default: r5.xlarge
+    AllowedValues:
+        - m4.large
+        - m5.xlarge
+        - r5.xlarge
+        - r5.2xlarge
+        - r5.4xlarge
+        - r5.8xlarge
+        - m6g.xlarge
+        - m6g.2xlarge
+        - m6g.4xlarge
+        - m6g.8xlarge
+        - r6g.xlarge
+        - r6g.2xlarge 
+        - r6g.4xlarge
+        - r6g.8xlarge
+  TaskInstanceType:
+    Description: Enter Instance type for the Task nodes
+    Type: String
+    Default: r5.xlarge
+    AllowedValues:
+        - m4.large
+        - m5.xlarge
+        - r5.xlarge
+        - r5.2xlarge
+        - r5.4xlarge
+        - r5.8xlarge
+        - m6g.xlarge
+        - m6g.2xlarge
+        - m6g.4xlarge
+        - m6g.8xlarge
+        - r6g.xlarge
+        - r6g.2xlarge 
+        - r6g.4xlarge
+        - r6g.8xlarge
+  
+  MinCoreInstanceCount:
+    Description: Minimum core instance count if auto-scaling enabled
+    Type: String
+    Default: 2
+    
+  MaxCoreInstanceCount:
+    Description: Maximum core instance count if auto-scaling enabled
+    Type: String
+    Default: 2    
+
+  MaximumCapacityUnits:
+    Description: Maximum core instance count if auto-scaling enabled
+    Type: String
+    Default: 2
+    
+  ebscoresize:
+    Description: EBS Storage size for core nodes
+    Type: String
+    Default: 100
+  
+  ebscorecount:
+    Description: EBS volume count for core nodes
+    Type: String
+    Default: 1
+
+  ebstasksize:
+    Description: EBS Storage size for core nodes
+    Type: String
+    Default: 50
+
+  ebstaskcount:
+    Description: EBS volume count for core nodes
+    Type: String
+    Default: 2	
+
+  ClusterInstanceProfile:
+    Description: Provide cluster instance profile name for the cluster
+    Type: String
+
+  ReleaseLabel:
+    Type: String
+    AllowedValues: 
+      - emr-6.3.0
+      - emr-6.4.0
+      - emr-6.5.0
+    Default: emr-6.3.0    
+    
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: must be the name of an existing Subnet
+    Default: "subnet-0ac81b00655edff4c"
+    
+  TerminationProtected:
+    Type: String
+    Description: Termination protection for the cluster - THIS IS STANDARD
+    Default: 'false'
+    
+  EbsRootVolumeSize:
+    Type: String
+    Default: '90'
+
+  stepscript:
+    Description: S3 url for step script
+    Type: String    
+    
+  SpotPrice:
+    Default: '0'
+    Description: Spot price (or use 0 for "on-demand" instance)
+    Type: Number
+
+  planitid:
+    Description: Planit for billing
+    Type: String    
+  
+  planitappname:
+    Description: Planit for billing
+    Type: String    
+    
+  EDOLoBNm:
+    Type: String
+    Description: Line Of Business Name
+    AllowedValues:
+      - daes
+      - cl
+      - pl
+      - gb
+      - ent
+      - clm
+      - dgtl
+      - hf
+      - hr
+      - ops
+      - hmco
+      - 3pd
+      - clact
+      - clmbi
+      - clmds
+      - plact
+      - plbi
+      - clds
+      - plds
+      - gbds
+      - gs
+
+  EDOSDLCEnv:
+    Type: String
+    Description: SDLC Environment Name
+    Default: dev
+    AllowedValues:
+      - dev
+      - qat
+      - pte
+      - ppd
+      - prd
+
+  EDOApplWEId:
+    Type: String
+    Description: Application Work Effort (WE) / PPM Id
+    Default: NA
+    
+  appname:
+    Description: appname
+    Type: String     
+  
+  TeamDL:
+    Description: EmailId for notification
+    Default: 'HadoopAdmin@thehartford.com'
+    Type: String
+    
+##+++++++++++++++++++++##
+##------ Mapping ------##
+##+++++++++++++++++++++##
+
+Mappings:
+  Environments:
+    NONPROD:
+      envshortname: 'np'
+      EmrCustomAmi: "{{resolve:ssm:/HIG/EDO/BASE/EMR/NP/ami:32}}"
+      Instancekeypair: "{{resolve:ssm:/HIG/EDO/BASE/EMR/keypair}}"
+      LogUri: "{{resolve:ssm:/HIG/EDO/BASE/EMR/NP/loguri}}"
+      rdsusername: "{{resolve:secretsmanager:rds-db-credentials/edonpbd-rds-emr6-mysql-001/admin:SecretString:username}}"
+      rdspwd: "{{resolve:secretsmanager:rds-db-credentials/edonpbd-rds-emr6-mysql-001/admin:SecretString:password}}"
+      rdsurl: "jdbc:{{resolve:secretsmanager:rds-db-credentials/edonpbd-rds-emr6-mysql-001/admin:SecretString:engine}}://{{resolve:secretsmanager:rds-db-credentials/edonpbd-rds-emr6-mysql-001/admin:SecretString:host}}:{{resolve:secretsmanager:rds-db-credentials/edonpbd-rds-emr6-mysql-001/admin:SecretString:port}}/{{resolve:secretsmanager:rds-db-credentials/edonpbd-rds-emr6-mysql-001/admin:SecretString:dbname}}?createDatabaseIfNotExist=true&amp;useSSL=true&amp;serverSslCert=/etc/hig/security/rds-combined-ca-bundle.pem"
+      bootstrapscript: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName}}/scripts/emr/transient/nonprod/bootstrap/emr_transient_boot_script.sh"
+      clusterservicerole: "{{resolve:ssm:/HIG/EDO/BASE/EMR/NP/clusterservicerole}}"
+    PROD:
+      envshortname: 'pd'
+      EmrCustomAmi: "{{resolve:ssm:/HIG/EDO/BASE/EMR/PD/ami:1}}"
+      Instancekeypair: "{{resolve:ssm:/HIG/EDO/BASE/EMR/keypair}}"
+      LogUri: "{{resolve:ssm:/HIG/EDO/BASE/EMR/PD/loguri}}"
+      rdsusername: "{{resolve:secretsmanager:rds-db-credentials/edopdbd-rds-emr6-mysql-001/admin:SecretString:username}}"
+      rdspwd: "{{resolve:secretsmanager:rds-db-credentials/edopdbd-rds-emr6-mysql-001/admin:SecretString:password}}"
+      rdsurl: "jdbc:{{resolve:secretsmanager:rds-db-credentials/edopdbd-rds-emr6-mysql-001/admin:SecretString:engine}}://{{resolve:secretsmanager:rds-db-credentials/edopdbd-rds-emr6-mysql-001/admin:SecretString:host}}:{{resolve:secretsmanager:rds-db-credentials/edopdbd-rds-emr6-mysql-001/admin:SecretString:port}}/{{resolve:secretsmanager:rds-db-credentials/edopdbd-rds-emr6-mysql-001/admin:SecretString:dbInstanceIdentifier}}?createDatabaseIfNotExist=true&amp;useSSL=true&amp;serverSslCert=/etc/hig/security/rds-combined-ca-bundle.pem"
+      bootstrapscript: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName}}/scripts/emr/transient/prod/bootstrap/emr_transient_boot_script.sh"
+      clusterservicerole: "{{resolve:ssm:/HIG/EDO/BASE/EMR/PD/clusterservicerole}}"
+
+##+++++++++++++++++++++##
+##----- Resources -----##
+##+++++++++++++++++++++##
+    
+Resources:
+  PersistentSecurityConfiguration:
+    Type: AWS::EMR::SecurityConfiguration
+    Properties:
+      SecurityConfiguration:
+        EncryptionConfiguration:
+          AtRestEncryptionConfiguration:
+            S3EncryptionConfiguration:
+              Fn::Transform:
+                Name: GetS3EncConf
+                Parameters:
+                  EDOLoBName: !Ref EDOLoBNm
+                  EDOSDLCEnv: !Ref EDOSDLCEnv
+              EncryptionMode: SSE-KMS
+              AwsKmsKey: "{{resolve:ssm:/HIG/EDO/BASE/EMR/S3kmskey}}"
+              Overrides: "$$REPLACEMENT$$"
+            LocalDiskEncryptionConfiguration:
+              EnableEbsEncryption: true
+              EncryptionKeyProviderType: AwsKms
+              AwsKmsKey: "{{resolve:ssm:/HIG/EDO/BASE/EMR/EBSkmskey}}"              
+          EnableInTransitEncryption: false
+          EnableAtRestEncryption: true
+  Clusteriamrole:
+    DependsOn:
+    - PersistentSecurityConfiguration  
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+#Standard HIG Ec2				  
+        - PolicyName: higbase
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - "s3:GetObject"
+                  - "s3:Listbucket"
+                  - "s3:HeadBucket"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::amazoncloudwatch-agent-${AWS::Region}/*" # CloudWatch Agent
+                  - !Sub "arn:${AWS::Partition}:s3:::aws-ssm-${AWS::Region}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::aws-windows-downloads-${AWS::Region}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::amazon-ssm-packages-${AWS::Region}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${AWS::Region}-birdwatcher-prod/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::aws-ssm-document-attachments-${AWS::Region}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::patch-baseline-snapshot-${AWS::Region}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::amazonlinux.${AWS::Region}.amazonaws.com/*" # Amazon Linux 2 updates
+                  - !Sub "arn:${AWS::Partition}:s3:::${AWS::Region}.elasticmapreduce"
+                  - !Sub "arn:${AWS::Partition}:s3:::${AWS::Region}.elasticmapreduce/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::packages.*.amazonaws.com"
+                  - !Sub "arn:${AWS::Partition}:s3:::packages.*.amazonaws.com/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::repo.*.amazonaws.com"
+                  - !Sub "arn:${AWS::Partition}:s3:::repo.*.amazonaws.com/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::aws-edoce-hig-artifacts"
+                  - !Sub "arn:${AWS::Partition}:s3:::aws-edoce-hig-artifacts/*"                  
+              - Effect: Allow
+                Action:
+                  - "ec2:Describe*"
+                  - "ec2:CreateTags"
+                Resource: "*"
+#Cluster policy				  				
+        - PolicyName: emrpolicy1
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:ListAllMyBuckets"
+                  - "s3:GetBucketLocation"
+                  - "s3:HeadBucket"
+                  - "kms:Decrypt"
+                  - "kms:Encrypt"
+                  - "kms:ListAliases"
+                  - "kms:GenerateDataKey"
+                  - "kms:DescribeKey"
+                  - "glue:CreateDatabase"
+                  - "glue:UpdateDatabase"
+                  - "glue:DeleteDatabase"
+                  - "glue:GetDatabase"
+                  - "glue:GetDatabases"
+                  - "glue:CreateTable"
+                  - "glue:UpdateTable"
+                  - "glue:DeleteTable"
+                  - "glue:GetTable"
+                  - "glue:GetTables"
+                  - "glue:GetTableVersions"
+                  - "glue:CreatePartition"
+                  - "glue:BatchCreatePartition"
+                  - "glue:UpdatePartition"
+                  - "glue:DeletePartition"
+                  - "glue:BatchDeletePartition"
+                  - "glue:GetPartition"
+                  - "glue:GetPartitions"
+                  - "glue:BatchGetPartition"
+                  - "glue:CreateUserDefinedFunction"
+                  - "glue:UpdateUserDefinedFunction"
+                  - "glue:DeleteUserDefinedFunction"
+                  - "glue:GetUserDefinedFunction"
+                  - "glue:GetUserDefinedFunctions"
+                  - "ec2:*Volume*"
+                  - "ec2:Describe*"
+                  - "ec2:CreateTags"
+                  - "elasticmapreduce:Describe*"
+                  - "elasticmapreduce:ListBootstrapActions"
+                  - "elasticmapreduce:ListClusters"
+                  - "elasticmapreduce:ListInstanceGroups"
+                  - "elasticmapreduce:ListInstances"
+                  - "elasticmapreduce:ListSteps"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:AbortMultipartUpload"
+                  - "s3:PutObjectRetention"
+                  - "s3:DeleteObjectVersion"
+                  - "s3:DeleteObject"
+                  - "s3:GetBucketVersioning"
+                  - "s3:GetObjectTagging"
+                  - "s3:GetObjectVersion"
+                  - "s3:ListBucketMultipartUploads"
+                  - "s3:ListBucketVersions"
+                  - "s3:ListMultipartUploadParts"
+                  - "s3:PutBucketVersioning"
+                  - "s3:PutObjectTagging"                  
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::edo-np-bd-emr-admin-001"
+                  - !Sub "arn:${AWS::Partition}:s3:::edo-np-bd-emr-admin-001/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::edo-np-bd-emr-admin-001"
+                  - !Sub "arn:${AWS::Partition}:s3:::edo-np-bd-emr-admin-001/*"                  
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMDirectoryServiceAccess"
+
+  EMRCluster:
+    DependsOn:
+    - PersistentSecurityConfiguration
+#    - ClusterInstanceProfile
+    Type: AWS::EMR::Cluster
+    Properties:
+      SecurityConfiguration:
+        Ref: PersistentSecurityConfiguration    
+      Applications:
+      # Add additional supported EMR applications here  
+        - Name: Hadoop 
+        - Name: Hive 
+        - Name: HCatalog         
+        - Name: Spark 
+        - Name: Tez 
+        - Name: Sqoop 
+        - Name: ZooKeeper 
+      EbsRootVolumeSize: !Ref EbsRootVolumeSize        
+      Instances:
+        Ec2KeyName: !FindInMap  
+            - Environments
+            - !Ref EnvType
+            - Instancekeypair
+        Ec2SubnetId: !Ref SubnetId
+        MasterInstanceGroup:
+          InstanceCount: 1
+          InstanceType: !Ref MasterInstanceType
+          Market: ON_DEMAND
+          Name: emrMaster
+        CoreInstanceGroup:
+          InstanceCount: !Ref MinCoreInstanceCount
+          InstanceType: !Ref CoreInstanceType
+          Market: ON_DEMAND
+          Name: emrCore
+          EbsConfiguration:
+            EbsBlockDeviceConfigs:
+            - VolumeSpecification:
+                SizeInGB: !Ref ebscoresize
+                VolumeType: gp2
+              VolumesPerInstance: !Ref ebscorecount
+            EbsOptimized: 'true'    
+          BidPrice:
+            Fn::If:
+             - WithSpotPrice
+             - Ref: SpotPrice
+             - Ref: AWS::NoValue
+        TerminationProtected: !Ref TerminationProtected       
+        KeepJobFlowAliveWhenNoSteps: FALSE  
+
+      Name:  !Sub "{{resolve:ssm:/HIG/EDO/BASE/GOV/AccountName}}-emr-${planitid}-${EDOLoBNm}-${appname}"
+      JobFlowRole: !Ref ClusterInstanceProfile
+#      JobFlowRole: edonpbd-role-qnx-emr-svc
+      ServiceRole: !FindInMap  
+                 - Environments
+                 - !Ref EnvType
+                 - clusterservicerole
+      AutoScalingRole: EMR_AutoScaling_DefaultRole
+      ReleaseLabel: !Ref ReleaseLabel
+      ManagedScalingPolicy:
+        ComputeLimits:
+          MaximumCapacityUnits: !Ref MaximumCapacityUnits
+          MaximumCoreCapacityUnits: !Ref MaxCoreInstanceCount
+          MaximumOnDemandCapacityUnits: !Ref MaxCoreInstanceCount
+          MinimumCapacityUnits: !Ref MinCoreInstanceCount
+          UnitType: 'Instances'       
+      VisibleToAllUsers: true
+      Steps:
+        - ActionOnFailure: CONTINUE
+          HadoopJarStep:
+            Args: 
+              - !Ref stepscript
+            Jar: "{{resolve:ssm:/HIG/EDO/BASE/EMR/stepjar}}"
+          Name: MasterStepScript
+      LogUri: !FindInMap  
+          - Environments
+          - !Ref EnvType
+          - LogUri
+      CustomAmiId: !FindInMap  
+                 - Environments
+                 - !Ref EnvType
+                 - EmrCustomAmi
+#      CustomAmiId: ami-05293b4e45340b335
+#      CustomAmiId: "{{resolve:ssm:/HIG/EDO/BASE/EMR/NP/ami}}"
+      Configurations:
+      - Classification: core-site
+        ConfigurationProperties:
+          fs.s3.canned.acl: BucketOwnerFullControl                  
+      - Classification: yarn-site
+        ConfigurationProperties:
+          yarn.log-aggregation.retain-seconds: -1
+          yarn.log-aggregation-enable: True
+#          yarn.nodemanager.remote-app-log-dir: s3://${logbucket}/emrapp/'${emr.clusterId}'/log/
+          yarn.nodemanager.vmem-check-enabled: False
+          yarn.scheduler.minimum-allocation-mb: 7168
+          yarn.resourcemanager.nodemanager-graceful-decommission-timeout-secs: 7200
+      - Classification: hive-site
+        ConfigurationProperties:
+          javax.jdo.option.ConnectionUserName: !FindInMap  
+                  - Environments
+                  - !Ref EnvType
+                  - rdsusername
+          javax.jdo.option.ConnectionDriverName: org.mariadb.jdbc.Driver
+          javax.jdo.option.ConnectionPassword: !FindInMap  
+                  - Environments
+                  - !Ref EnvType
+                  - rdspwd
+          javax.jdo.option.ConnectionURL: !FindInMap  
+                  - Environments
+                  - !Ref EnvType
+                  - rdsurl
+      - Classification: spark-defaults
+        ConfigurationProperties:
+          spark.port.maxRetries: 100
+          
+      BootstrapActions:
+
+      - Name: EMRTransientsetup
+        ScriptBootstrapAction:
+          Path: !FindInMap  
+              - Environments
+              - !Ref EnvType
+              - bootstrapscript
+      Tags:
+        -
+          Key: "hig-billing"
+          Value: !Ref planitid
+        -
+          Key: "hig-planit-appid"
+          Value: !Ref planitappname
+        -
+          Key: "hig-environment-type"
+          Value: !Ref EnvType
+        -
+          Key: "hig-created-by"
+          Value: "Hadoop Admin"
+        -
+          Key: "hig-data-classification"
+          Value: "CompanyConfidential"
+        -
+          Key: "hig-owner"
+          Value: "HadoopAdmin@thehartford.com"
+        - Key: EDO-LoB-Nm
+          Value: !Ref EDOLoBNm
+        - Key: EDO-Appl-Nm
+          Value: !Ref appname
+        - Key: EDO-SDLC-Env
+          Value: !Ref EDOSDLCEnv
+        - Key: EDO-Appl-WE-Id
+          Value: !Ref EDOApplWEId
+
+  EMRTaskInstanceGroupConfig:
+    DependsOn:
+    - EMRCluster  
+    Type: AWS::EMR::InstanceGroupConfig
+    DeletionPolicy: Retain
+    Properties:
+      InstanceCount: 1
+      InstanceType:
+        Ref: TaskInstanceType
+      InstanceRole: TASK
+      Market: SPOT
+      Name: TaskGroup1
+      EbsConfiguration:
+        EbsBlockDeviceConfigs:
+        - VolumeSpecification:
+            SizeInGB: !Ref ebstasksize
+            VolumeType: gp2
+          VolumesPerInstance: !Ref ebstaskcount
+        EbsOptimized: 'true'
+      BidPrice:
+        Fn::If:
+        - WithSpotPrice
+        - Ref: SpotPrice
+        - Ref: AWS::NoValue
+      JobFlowId:
+        Ref: EMRCluster
+
+  ruleTopic:
+    DependsOn:
+    - EMRCluster
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription: 
+        - Endpoint: !Ref TeamDL
+          Protocol: email
+          
+  eventRule:
+   DependsOn:
+   - ruleTopic  
+   Type: AWS::Events::Rule
+   Properties:
+     Description: 'Alerts get triggered when new emr transient cluster get created or a cluster terminated'
+     EventPattern:
+       source:
+         - 'aws.emr'
+       detail-type:
+         - 'EMR Cluster State Change'
+         - 'EMR Auto Scaling Policy State Change'
+         - 'EMR Step Status Change'
+         - 'EMR Instance Group State Change'
+         - 'EMR Instance Fleet State Change'
+         - 'EMR Instance Group Status Notification'
+       detail:
+         clusterId: 
+           - !Ref EMRCluster
+     State: "ENABLED"
+     Targets:
+      - 
+       Arn: !Ref ruleTopic
+       Id: eventRule
+
+  eventTopicPolicy:
+    DependsOn:
+    - eventRule  
+    Type: 'AWS::SNS::TopicPolicy'
+    Properties:
+        PolicyDocument:
+            Statement:
+                - Effect: Allow
+                  Principal:
+                    Service: events.amazonaws.com
+                  Action: 'sns:Publish'
+                  Resource: '*'
+        Topics:
+            - !Ref ruleTopic
+            
+  EMRDashboard:
+   DependsOn:
+   - EMRCluster
+   Type: AWS::CloudWatch::Dashboard
+   Properties:
+     DashboardName: !Ref EMRCluster
+     DashboardBody: !Sub |
+       {
+       "widgets": [
+           {
+            "height": 3,
+            "width": 3,
+            "y": 9,
+            "x": 18,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/S3", "NumberOfObjects", "StorageType", "AllStorageTypes", "BucketName", "aws-edoce-s3-lake-001", { "period": 86400, "label": "3001 NumberOfObjects", "stat": "Maximum" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "S3 # of Objects",
+                "period": 604800
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 9,
+            "x": 3,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MemoryReservedMB", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "memory reserved",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 0,
+            "x": 0,
+            "type": "text",
+            "properties": {
+                "markdown": "\n# EMR Dashboard \n## job-flow-id = ${EMRCluster} \n"
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 15,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MRLostNodes", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "mr-lost",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 6,
+            "x": 15,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "HDFSUtilization", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "hdfs - utilization",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 12,
+            "x": 0,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "ContainerReserved", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "container reserved",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 18,
+            "x": 18,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "PendingDeletionBlocks", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "pending delete",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 9,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MRDecommissionedNodes", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "mr decomm",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 0,
+            "x": 8,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "AppsRunning", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "apps-running",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 9,
+            "x": 6,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MemoryAllocatedMB", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "memory-allocated",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 9,
+            "x": 0,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MemoryTotalMB", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "memory-total",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 0,
+            "x": 14,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "AppsFailed", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "apps-failed",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 0,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MRTotalNodes", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "MR total",
+                "period": 300
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 6,
+            "x": 0,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "AppsSubmitted", "JobFlowId", "${EMRCluster}" ],
+                    [ ".", "MRTotalNodes", ".", ".", { "visible": false } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "apps-submitted",
+                "period": 300
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 15,
+            "x": 15,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "TotalLoad", "JobFlowId", "${EMRCluster}" ],
+                    [ ".", "MRActiveNodes", ".", ".", { "visible": false } ],
+                    [ ".", "CapacityRemainingGB", ".", ".", { "visible": false } ],
+                    [ ".", "AppsKilled", ".", ".", { "visible": false } ],
+                    [ ".", "MRUnhealthyNodes", ".", ".", { "visible": false } ],
+                    [ ".", "ContainerPendingRatio", ".", ".", { "visible": false } ],
+                    [ ".", "MissingBlocks", ".", ".", { "visible": false } ],
+                    [ ".", "YARNMemoryAvailablePercentage", ".", ".", { "visible": false } ],
+                    [ ".", "MemoryAvailableMB", ".", ".", { "visible": false } ],
+                    [ ".", "MRRebootedNodes", ".", ".", { "visible": false } ],
+                    [ ".", "AppsPending", ".", ".", { "visible": false } ],
+                    [ ".", "S3BytesRead", ".", ".", { "visible": false } ],
+                    [ ".", "HDFSBytesWritten", ".", ".", { "visible": false } ],
+                    [ ".", "dfs.FSNamesystem.PendingReplicationBlocks", ".", ".", { "visible": false } ],
+                    [ ".", "ContainerAllocated", ".", ".", { "visible": false } ],
+                    [ ".", "CoreNodesPending", ".", ".", { "visible": false } ],
+                    [ ".", "ContainerReserved", ".", ".", { "visible": false } ],
+                    [ ".", "TaskNodesRunning", ".", ".", { "visible": false } ],
+                    [ ".", "S3BytesWritten", ".", ".", { "visible": false } ],
+                    [ ".", "UnderReplicatedBlocks", ".", ".", { "visible": false } ],
+                    [ ".", "CorruptBlocks", ".", ".", { "visible": false } ],
+                    [ ".", "HDFSUtilization", ".", ".", { "visible": false } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Total Load",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 18,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "CoreNodesRunning", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "CoreNodesRunning",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 6,
+            "x": 6,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "AppsCompleted", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Apps Completed",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 12,
+            "x": 3,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "ContainerPending", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "container-pending",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 12,
+            "x": 9,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MissingBlocks", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "missing blocks",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 6,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MRUnhealthyNodes", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "MR Unhealthy Nodes",
+                "period": 300
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 0,
+            "x": 17,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "AppsKilled", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Apps Killed",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 3,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MRActiveNodes", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "MR Active Nodes",
+                "period": 300
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 21,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "CoreNodesPending", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Core Nodes Pending",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 12,
+            "x": 6,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "ContainerAllocated", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "container allocated",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 18,
+            "x": 15,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "dfs.FSNamesystem.PendingReplicationBlocks", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "dfs.FSNamesystem.PendingReplicationBlocks",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 6,
+            "x": 9,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "HDFSBytesWritten", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "HDFS Bytes Written",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 9,
+            "x": 9,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "S3BytesRead", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "S3 Bytes Read",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 0,
+            "x": 11,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "AppsPending", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Apps Pending",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 3,
+            "x": 12,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MRRebootedNodes", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "MR Reboot Nodes",
+                "period": 300
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 15,
+            "x": 9,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "YARNMemoryAvailablePercentage", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Yarn Memory Available %",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 12,
+            "x": 15,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "UnderReplicatedBlocks", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "under replicated blocks",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 12,
+            "x": 12,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "CorruptBlocks", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "singleValue",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Corrupt Blocks",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0,
+                        "max": 100
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 6,
+            "x": 21,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "HDFSBytesRead", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "hdfs-read",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "min": 0
+                    }
+                }
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 18,
+            "x": 9,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "CoreNodesRunning", "JobFlowId", "${EMRCluster}" ],
+                    [ ".", "TaskNodesPending", ".", ".", { "visible": false } ],
+                    [ ".", "YARNMemoryAvailablePercentage", ".", ".", { "visible": false } ],
+                    [ ".", "ContainerAllocated", ".", ".", { "visible": false } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Capacity Remaining GB",
+                "period": 300
+            }
+        },
+        {
+            "height": 6,
+            "width": 9,
+            "y": 15,
+            "x": 0,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "MemoryAllocatedMB", "JobFlowId", "${EMRCluster}", { "color": "#ff7f0e" } ],
+                    [ ".", "MemoryReservedMB", ".", ".", { "visible": false } ],
+                    [ ".", "MemoryAvailableMB", ".", "." ],
+                    [ ".", "MemoryTotalMB", ".", ".", { "visible": false } ]
+                ],
+                "view": "timeSeries",
+                "stacked": true,
+                "region": "us-east-1",
+                "title": "MemoryAllocatedMB, MemoryAvailableMB",
+                "period": 300
+            }
+        },
+        {
+            "height": 3,
+            "width": 3,
+            "y": 9,
+            "x": 15,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/ElasticMapReduce", "S3BytesWritten", "JobFlowId", "${EMRCluster}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "S3 Bytes Written",
+                "period": 300
+            }
+        },
+        {
+            "height": 3,
+            "width": 6,
+            "y": 12,
+            "x": 18,
+            "type": "metric",
+            "properties": {
+                "metrics": [
+                    [ "AWS/S3", "BucketSizeBytes", "StorageType", "StandardStorage", "BucketName", "aws-edoce-s3-lake-001", { "label": "3001 BucketSizeBytes" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "S3 Bucket Size",
+                "period": 21600,
+                "yAxis": {
+                    "left": {
+                        "min": 0
+                    }
+                },
+                "stat": "Sum"
+            }
+          }
+         ]
+       }
+  
+##+++++++++++++++++++++##
+##------ Metadata -----##
+##+++++++++++++++++++++##
+
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "EC2 Properties"
+        Parameters: 
+          - SubnetId
+          - Instancekeypair
+          - SecurityGroupIds
+          - InstanceTypeParameter
+          - TerminationProtectParameter
+          - DetailedMonitoringParameter
+      - 
+        Label: 
+          default: "Additional App Volume Properties"
+        Parameters: 
+          - AppVolumeSizeParameter
+          - EncryptedParameter
+          - VolumeKMSEncryptionID
+
+      - 
+        Label: 
+          default: "HIG Tags"
+        Parameters: 
+          - HIGPlanITAppIDParameter
+          - HIGPlanITAppNameParameter
+          - HIGCreatedByParameter
+          - HIGCreatedDateParameter
+          - HIGCommentsParameter
+    
+##+++++++++++++++++++++##
+##------ Outputs ------##
+##+++++++++++++++++++++##
+
+Outputs:
+
+  YARNResourceManager:
+    Description: Web URL for access to your EMR Clusters
+    Value: !Join ["", ['http://',!GetAtt EMRCluster.MasterPublicDNS,':8088']]
+
+  SparkHistoryServer:
+    Description: Web URL for access to your EMR Clusters
+    Value: !Join ["", ['http://',!GetAtt EMRCluster.MasterPublicDNS,':18080']]

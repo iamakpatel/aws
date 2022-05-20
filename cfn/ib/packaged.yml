@@ -1,0 +1,417 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: EDOCE ImageBuilder Pipeline Template
+
+Parameters:
+  AppId:
+    Type: Number
+    Description: PlanIT application ID number, excludes APP- (ex. "4708")
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: "Vpc ID for Instance Creation"
+  DataClassification:
+    Type: String
+    Description: Data classification for the application
+    AllowedValues:
+      - NonConfidential
+      - CompanyConfidential
+      - HighlyRestricted
+  AmiProductDescription:
+    Type: String
+    Description: Additional descriptional tag for AMI
+  EnvironmentType:
+    Type: String
+    Description: Envrionment type name should be NONPROD
+    AllowedValues:
+      - nonprod
+      - prod
+  StageName:
+    Type: String
+    Description: Name of the deployment stage (dev, qa, or prod)
+  SecurityGroupId:
+    Type: 'AWS::EC2::SecurityGroup::Id'
+    Description: "Security Group ID for Instance Creation"
+  ImageBuilderInstanceProfile:
+    Type: String
+    Description: "Shared Instance Profile that allows for all needed permissions for an EC2 instance to build an AMI with ImageBuilder"
+  AMITopic:
+    Type: String
+    Description: "AMI SNS Topic to attach to ImageBuilder"
+  KmsDistributionConfigurationFunction:
+    Type: String
+    Description: "Custom Resource function that will create an ImageBuilder Distribution Configuration"
+    
+  # Expected defaulted values; not provided by image builder pipeline
+  AMICompleteEmail:
+    Type: 'String'
+    Description: An email to be notified when completed; leave blank to not send email
+    Default: ""
+  SharedAccounts:
+    Type: String
+    Default: ""
+    Description: "Provide Account IDs seperated by comma. New AMI will be shared to these accounts."
+
+Conditions:
+  HasAMICompleteEmail: !Not [!Equals [!Ref AMICompleteEmail, ""]]
+  IsProdAccount: !Equals [prod, !Ref EnvironmentType]
+
+Resources:
+  AmazonLinuxRecipe:
+    Type:  AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Sub "AppServer-Linux-EC2-${EnvironmentType}-${StageName}"
+      Description: EDOCE AppServer AL 2 Recipe
+      Components:
+        - ComponentArn: !Ref MyLinuxComponent
+      ParentImage: 
+        "Fn::Transform":
+            Name: "OrgSSM"
+            Parameters:
+                Key: "image/awslinux"
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:      
+            Encrypted: True  # for the local AMI to be encypted, we need to specify the initial EBS with encyption
+            KmsKeyId: !Sub "arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/ami"
+            VolumeType: gp2
+            VolumeSize: 90 #changed from 8 to 90
+            DeleteOnTermination: True
+        - DeviceName: "/dev/xvdb"
+          Ebs:      
+            Encrypted: True  # for the local AMI to be encypted, we need to specify the initial EBS with encyption
+            KmsKeyId: !Sub "arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/ami"
+            VolumeType: gp2
+            VolumeSize: 120
+            DeleteOnTermination: True    
+      Version: 
+        "Fn::Transform":
+          Name: DateVersion
+      Tags:
+        "hig-billing": !Sub "APP-${AppId}"
+        "hig-planit-appid": !Sub "APP-${AppId}-${EnvironmentType}"
+        "hig-environment-type": !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        "hig-data-classification": !Ref DataClassification
+  
+  LinuxPipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties: 
+      Name: !Sub "AppServer-LinuxPipeline-EC2-${EnvironmentType}-${StageName}"
+      Description: Image Pipeline for the a Linux build
+      ImageRecipeArn: !Ref AmazonLinuxRecipe
+      InfrastructureConfigurationArn: !Ref LinuxInfrastructureConfiguration
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+        TimeoutMinutes: 90
+      DistributionConfigurationArn: !GetAtt LinuxDistributionConfiguration.Arn
+      Status: ENABLED
+      Schedule:
+        ScheduleExpression: 'cron(0 11 11 11 11 ?)'
+      Tags:
+        "hig-billing": !Sub "APP-${AppId}"
+        "hig-planit-appid": !Sub "APP-${AppId}-${EnvironmentType}"
+        "hig-environment-type": !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        "hig-data-classification": !Ref DataClassification
+  
+  LinuxInfrastructureConfiguration:
+    Type:  AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub "AppServer-Linux-Pipeline-InfrastructureConfiguration-EC2-${EnvironmentType}-${StageName}"
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      InstanceTypes:
+        - t2.micro
+      Logging:
+        S3Logs:
+          S3BucketName: "{{resolve:ssm:/HIG/Base/S3/LogBucketName:1}}"
+          S3KeyPrefix: AWSLinuxImageBuilderLogs
+      TerminateInstanceOnFailure: false # set to false for troubleshooting only   
+      SnsTopicArn: !Ref AMITopic
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+        - !Sub "{{resolve:ssm:/HIG/${VpcId}/SG-Default:1}}"
+      SubnetId: 
+        "Fn::Transform":
+          Name: GetStringList
+          Parameters:
+            ParameterName: "app/SubnetIds"
+            Random: True
+            StringList: True  # Only one returned so its just the subnet id
+            Selection: 1
+      Tags:
+        "hig-billing": !Sub "APP-${AppId}"
+        "hig-planit-appid": !Sub "APP-${AppId}-${EnvironmentType}"
+        "hig-environment-type": !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        "hig-data-classification": !Ref DataClassification
+          
+  LinuxDistributionConfiguration:
+    Type: "Custom::KmsDistributionConfiguration"
+    Properties:
+      ServiceToken: !Ref KmsDistributionConfigurationFunction
+      Name: !Sub "AppServer-AWSLinux-Pipeline-DistributionConfiguration-EC2-${EnvironmentType}-${StageName}"
+      Description: "Distribution Configuration that will tag the output AMI"
+      Distributions:
+        - Region: "us-east-1"
+          AmiDistributionConfiguration:
+            # Name: !Sub "EDOCE-AppServer-Linux2-USEast1-EC2-${StageName} {{imagebuilder:buildVersion}} {{ imagebuilder:buildDate }}"
+            Name: !Sub "Edo-Ami-EC2-AppServer-${StageName}-{{imagebuilder:buildVersion}}-{{ imagebuilder:buildDate }}"
+            Description: "An AppServer Linux 2 image"
+            KmsKeyId: !Sub "arn:${AWS::Partition}:kms:us-east-1:${AWS::AccountId}:alias/ami"
+            LaunchPermission:
+              UserIds: !Split ["," , !Ref SharedAccounts]
+            AmiTags:
+              "hig-billing": !Sub "APP-${AppId}"
+              "hig-planit-appid": !Sub "APP-${AppId}-${EnvironmentType}"
+              "hig-environment-type": !If
+                    - IsProdAccount
+                    - PROD
+                    - NONPROD
+              "hig-data-classification": !Ref DataClassification
+              "hig-description": !Ref AmiProductDescription
+              "Name": !Sub "Edo-Ami-EC2-AppServer-{{ imagebuilder:buildDate }}"
+#        - Region: "eu-west-2"
+#          AmiDistributionConfiguration:
+#            Name: !Sub "EDOCE-AWS-Linux2-EUWest2-${StageName} {{imagebuilder:buildVersion}} {{ imagebuilder:buildDate }}"
+#            Description: "An Amazon Linux 2 image"
+#            KmsKeyId: !Sub "arn:${AWS::Partition}:kms:eu-west-2:${AWS::AccountId}:alias/ami"
+            #LaunchPermission:
+            #  UserIds:
+            #    - "{{resolve:ssm:/HIG/Base/ProductionAccountId:1}}"
+#            AmiTags:
+#              "hig-billing": !Sub "APP-${AppId}"
+#              "hig-planit-appid": !Sub "APP-${AppId}-${EnvironmentType}"
+#              "hig-environment-type": !Ref EnvironmentType
+#              "hig-data-classification": !Ref DataClassification
+      Tags:
+        "hig-billing": !Sub "APP-${AppId}"
+        "hig-planit-appid": !Sub "APP-${AppId}-${EnvironmentType}"
+        "hig-environment-type": !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        "hig-data-classification": !Ref DataClassification
+
+  MyLinuxComponent: #leave comments here
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      ChangeDescription: Installs prerequisites for EDOCE Images
+      Description: This will install the prerequisites for EC2 and EMR nodes
+      Name: !Sub "AppServer-LinuxRequirements-EC2-${EnvironmentType}-${StageName}"
+      KmsKeyId: !Sub "arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/pipeline"
+      Platform: Linux
+      Tags:
+        "hig-billing": !Sub "APP-${AppId}"
+        "hig-planit-appid": !Sub "APP-${AppId}-${EnvironmentType}"
+        "hig-environment-type": !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        "hig-data-classification": !Ref DataClassification
+      Version: 
+        "Fn::Transform":
+          Name: DateVersion
+      Data: !Sub |
+        name: EDOPrereqs
+        description: Install required packages
+        schemaVersion: 1.0
+
+        phases:
+          - name: build
+            steps:
+              - name: DownloadSudoers
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/sudoers"
+                    destination: /etc/sudoers
+              - name: PermissionSudoersFiles
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - sudo chmod 440 /etc/sudoers
+              - name: DownloadCloudWatchConfig
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/amazon-cloudwatch-agent.json"
+                    destination: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent.json
+              - name: enablecloudwatch
+                action: ExecuteBash
+                onFailure: Continue
+                inputs:
+                  commands:
+                    - sudo amazon-linux-extras install collectd
+                    - cd /opt/aws/amazon-cloudwatch-agent/bin
+                    - sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent.json
+              - name: mountandcreatedatadrive
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - echo "Attaching Additional EBS Volume for the data drive at /tech/app"
+                    - lsblk
+                    - sudo blkid
+                    - sudo umount -f /dev/xvdb
+                    - sudo mkfs -t xfs /dev/xvdb
+                    - sudo mkdir -p /tech/app
+                    - sudo mount /dev/xvdb /tech/app
+                    - sudo chmod -R 755 /tech/app
+                    - blkiddata=$(sudo blkid -s UUID -o value /dev/xvdb)
+                    - echo UUID="$blkiddata" /tech/app xfs defaults,nofail 0 2 >> /etc/fstab
+                    - lsblk
+                    - sudo blkid
+                    #- sed -i 's+/opt/mount1+/tech/app +' /etc/fstab 
+              - name: DownloadYumRepo
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/yum-repo/*"
+                    destination: /etc/yum.repos.d/
+              - name: create_repoPublicKey_folder
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - sudo mkdir -p /var/aws/emr
+                    - sudo chmod 755 /var/aws
+                    - sudo chmod 755 /var/aws/emr
+                    - sudo cp /etc/yum.repos.d/repoPublicKey.txt /var/aws/emr/ 
+                    # - sudo cp /etc/yum.repos.d/syncemrpc.sh /usr/local/bin/
+              # - name: DownloadRepoPublicKey
+              #   action: S3Download
+              #   onFailure: Continue
+              #   inputs:
+              #     - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/yum-repo/repoPublicKey.txt"
+              #       destination: /var/aws/emr
+              - name: Change_RepoPublicKey_Permissions
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - sudo chmod 644 /var/aws/emr/*
+              # - name: DownloadyumpkgShellScript
+              #   action: S3Download
+              #   onFailure: Abort
+              #   inputs:
+              #     - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/yum-repo/yumpkg.sh"
+              #       destination: /var/aws/
+              # - name: DownloademrbinShellScript
+              #   action: S3Download
+              #   onFailure: Abort
+              #   inputs:
+              #     - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/yum-repo/emrbin.sh"
+              #       destination: /var/aws/
+              - name: EMRPreReqs
+                action: ExecuteBash
+                onFailure: Continue
+                inputs:
+                  commands:
+                    - sudo -s
+                    # - yum-config-manager --disable emr-bigtopy
+                    - useradd hadoop
+                    - . /etc/yum.repos.d/yumpkg.sh
+                    - . /etc/yum.repos.d/emrbin.sh
+              - name: create_swapfile
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - sudo fallocate -l 1G /swapfile
+                    - sudo dd if=/dev/zero of=/swapfile bs=1024 count=1048576
+                    - sudo chmod 600 /swapfile
+                    - sudo mkswap /swapfile
+                    - sudo swapon /swapfile
+                    - sudo su -c 'echo "/swapfile swap swap defaults 0 0" >> /etc/fstab'
+              - name: create_folders
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - sudo mkdir -p /etc/pepperdata/logs
+                    - sudo mkdir -p /opt/pepperdata
+                    - sudo mkdir -p /opt/liquibase
+                    - sudo mkdir -p /tech/app
+                    # - sudo mkdir -p /usr/app
+                    # - sudo mkdir -p /data/app
+              - name: DownloadPepperData
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/BinariesBucketName:1}}/pepperdata/PepperdataSupervisor-6.1.3-H26_YARN2.rpm"
+                    destination: /opt/pepperdata/PepperdataSupervisor-6.1.3-H26_YARN2.rpm
+              - name: DownloadPepperDataConfigs
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/pepperdata/*
+                    destination: /etc/pepperdata
+              - name: DownloadAppServerBinaries
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/BinariesBucketName:1}}/liquibase/liquibase-4.3.5.tar.gz"
+                    destination: /opt/liquibase/liquibase-4.3.5.tar.gz
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/BinariesBucketName:1}}/snowflakjdbc/snowflake-jdbc-3.9.2-javadoc.jar"
+                    destination: /tech/app/snowflake-jdbc-3.9.2-javadoc.jar
+              - name: AnsibleConfiguration
+                action: ExecuteBash
+                onFailure: Continue
+                inputs:
+                  commands:
+                     - sudo git clone -b ${StageName} https://github.thehartford.com/HIG/edo_cloud_ansible /opt/hig/edo_cloud_ansible
+                     - ansible-playbook -i "localhost," -c local /opt/hig/edo_cloud_ansible/playbooks/master.yml
+                     - ansible-playbook -i "localhost," -c local /opt/hig/edo_cloud_ansible/playbooks/appserver.yml
+              - name: create_sqoop_folder
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - sudo mkdir -p /etc/sqoop/conf
+                    - sudo mkdir -p /tech/oracle/network
+              - name: DownloadMySqlOracleFiles
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/BinariesBucketName:1}}/emr/jars/*"
+                    destination: /etc/sqoop/conf/
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/BinariesBucketName:1}}/emr/client/*"
+                    destination: /tech/oracle/network/
+              - name: parseSudoFile
+                action: ExecuteBash
+                onFailure: Abort
+                inputs:
+                  commands:
+                    - sudo chmod 755 /tech/oracle/network/*
+                    - sudo chmod 755 /etc/sqoop/conf/*
+              - name: DownloadSyncEmrPcConf
+                action: S3Download
+                onFailure: Abort
+                inputs:
+                  - source: "s3://{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${StageName}/Linux/yum-repo/syncemrpc.sh"
+                    destination: /usr/local/bin/syncemrpc.sh
+              - name: BackupSSHKeyForAnsibleTowerUser
+                action: ExecuteBash
+                onFailure: Continue
+                inputs:
+                  commands:
+                    - sudo cp /home/anstmp/.ssh/authorized_keys /home/anstmp/.ssh/authorized_keys_backup
+
+  AMICompletedEmailSubscription:
+    Type: 'AWS::SNS::Subscription'
+    Condition: HasAMICompleteEmail
+    Properties:
+      TopicArn: !Ref AMITopic
+      Endpoint: !Ref AMICompleteEmail
+      Protocol: email
+      
+Outputs:
+  Pipelines:
+    Description: "ImageBuilder pipelines separated by ',' to autostart when built"
+    Value: !Ref LinuxPipeline

@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  DO NOT DELETE - Lambda function to deploy EMR Trasinet Stack
+Parameters:
+  FunctionName:
+    Type: String
+    Description: Name of Lambda Function
+Resources:
+  lambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Runtime: python3.6
+      Role: arn:aws:iam::357555245473:role/service-role/lmfn-deploy-transitent-lambda-role
+      Handler: index.handler
+      Description: Deployment of EMR Transient Stack
+      Timeout: 900
+      MemorySize: 128
+      TracingConfig: 
+        Mode: Active
+      VpcConfig:
+        SecurityGroupIds:
+          - sg-089c14197eeeb168c
+        SubnetIds:
+          - subnet-01188f93f07cce294
+          - subnet-0ac81b00655edff4c
+      Environment:
+        Variables:
+          templateUrl: https://edo-np-hub-s3-edoce-artifacts.s3.amazonaws.com/templates/co26853/emr/transient/cfn/template.yml
+      Tags:
+        - Key: hig-planit-appid
+          Value: APP-4708-NONPROD
+
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime
+          from urllib.parse import urlparse
+
+          #params_url = os.environ['paramsFile']
+          template_url = os.environ['templateUrl']
+
+          def parse_params(params_url):
+            s3 = boto3.resource('s3')
+            print('parsing the params file')
+            s3_parse = urlparse(params_url)
+            print('After urlparse')
+            bucket = s3_parse.netloc
+            s3_key = s3_parse.path.lstrip('/')
+            s3_obj = s3.Object(bucket, s3_key)
+            print (s3_key,bucket)
+            print('First S3 api call')
+            params_raw_data = s3_obj.get()["Body"].read().decode('utf-8')
+            template_params = json.loads(params_raw_data)
+            return template_params
+            
+          def launch_stack(params_url):
+            cfn = boto3.client('cloudformation')
+            print('parsing the stack yml')
+            current_ts = datetime.now().isoformat().split('.')[0].replace(':','-')
+            stackname = 'EMR-Transient-' + current_ts
+            capabilities = ['CAPABILITY_IAM', 'CAPABILITY_AUTO_EXPAND']
+            try:
+              template_params = parse_params(params_url)
+              print('calling parse params func')
+              stackdata = cfn.create_stack(
+                StackName=stackname,
+                DisableRollback=True,
+                TemplateURL=template_url,
+                Parameters=template_params,
+                Capabilities=capabilities)
+              print('Finished calling create stack')  
+            except Exception as e:
+              error_msg = str(e)
+              print(error_msg)
+              stackdata = {"error": error_msg}
+            return stackdata  
+
+          def stack_success(stackdata):
+            if 'error' in stackdata:
+              return False
+            else:
+              return True
+
+          def handler(event, context):
+            print("Received event:")
+            print(event)
+            stack_result=launch_stack(event['paramsFile'])
+            print(stack_result)
+
+            if stack_success(stack_result):
+              resp_txt = "Your stack has been launched. Please visit the AWS Console to track its progress"
+            else:
+              resp_txt = "Your stack failed to launch. Please visit the AWS Console to investigate further"
+
+            json_resp = {
+              "version": "1.0",
+              "response": {
+                "outputSpeech": {
+                  "type": "PlainText",
+                  "text": resp_txt
+                },
+                "shouldEndSession": "true"
+              }
+            }
+            return json_resp  
+
+Outputs:
+  LambdaFunctionName:
+    Description: Name of Lambda function.
+    Value: !Ref lambda
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-LambdaFunctionName
+  LambdaFunctionARN:
+    Description: Lambda function ARN.
+    Value:
+      Fn::GetAtt:
+        - lambda
+        - Arn
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-LambdaFunctionARN

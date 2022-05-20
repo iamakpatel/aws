@@ -1,0 +1,144 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.8
+    commands:
+      - pip3 install --disable-pip-version-check -U cfn-lint
+  build:
+    commands:
+      - export ARG=$(cfn-lint -t ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/packaged.yml -i E1029 -f parseable)
+      - jq -n --arg body "$ARG" '{title:"ImagePipeline LINT issue for ImageBuilderPipelineAWSLinux",body:$body}' > file.json
+      - cat file.json
+      - if [[ $(cat file.json) =~ .*E[0-9]{4}.* ]]; then echo "Failed cfn-lint; check issues"; exit 1; fi
+  post_build:
+    commands:
+      - |-
+        if [[ ${PRODUCT_NAME} == "acerhel7" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/acerhel7/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+          
+        fi
+        
+        if [[ ${PRODUCT_NAME} == "emr" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/emr/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+          
+        fi
+
+        if [[ ${PRODUCT_NAME} == "elastic-stack-al2" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/elastic-stack-al2/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+          
+        fi
+
+        if [[ ${PRODUCT_NAME} == "ec2-al2" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/ec2-al2/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+        if [[ ${PRODUCT_NAME} == "ec2-rhel7" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/ec2-rhel7/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+        if [[ ${PRODUCT_NAME} == "ec2-rhel8" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/ec2-rhel8/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+        if [[ ${PRODUCT_NAME} == "appserver" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/ec2-AppServer/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+
+        if [[ ${PRODUCT_NAME} == "dremio" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/dremio/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+          
+        fi
+
+        if [[ ${PRODUCT_NAME} == "talend" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/talend/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+        if [[ ${PRODUCT_NAME} == "nifi" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/nifi/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+        if [[ ${PRODUCT_NAME} == "ebs-rhel7" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/ebs-rhel7/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+        if [[ ${PRODUCT_NAME} == "websphere" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/scripts/ s3://${ARTIFACT_BUCKET}/imagebuilder/websphere/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+        if [[ ${PRODUCT_NAME} == "codebuild" ]];
+        then
+            aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/ s3://${ARTIFACT_BUCKET}/imagebuilder/codebuild/ImageBuilderArtifacts/${STAGE_NAME}/ \
+              --acl bucket-owner-full-control \
+              --sse aws:kms \
+              --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+            #Build Docker Image
+            cd imagebuilder/${PRODUCT_NAME}/
+            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 622325239849.dkr.ecr.us-east-1.amazonaws.com
+            docker build -t edo/codebuild/al2 .
+            if [[ ${CODEBUILD_SOURCE_VERSION} == "master" ]];
+            then
+                docker tag edo/codebuild/al2:latest 622325239849.dkr.ecr.us-east-1.amazonaws.com/edo/codebuild/al2:prd
+                docker push 622325239849.dkr.ecr.us-east-1.amazonaws.com/edo/codebuild/al2:prd
+            else
+                docker tag edo/codebuild/al2:latest 622325239849.dkr.ecr.us-east-1.amazonaws.com/edo/codebuild/al2:latest
+                docker push 622325239849.dkr.ecr.us-east-1.amazonaws.com/edo/codebuild/al2:latest
+            fi
+            
+        fi
+        if [[ ${PRODUCT_NAME} == "titus-poc" ]];
+        then
+        aws s3 sync ${CODEBUILD_SRC_DIR}/imagebuilder/${PRODUCT_NAME}/ s3://${ARTIFACT_BUCKET}/imagebuilder/titus-poc/ImageBuilderArtifacts/${STAGE_NAME}/ \
+          --acl bucket-owner-full-control \
+          --sse aws:kms \
+          --sse-kms-key-id ${CODEBUILD_KMS_KEY_ID};
+        fi
+artifacts:
+  files:
+    - imagebuilder/${PRODUCT_NAME}/packaged.yml
+
+cache:
+  paths:
+    - "/root/.cache/pip/**/*"

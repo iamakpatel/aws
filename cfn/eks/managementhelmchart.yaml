@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Amazon EKS - Management Helm Chart
+
+Metadata:
+  "AWS::CloudFormation::Interface":
+    ParameterGroups:
+      - Label:
+          default: "Application Configuration"
+        Parameters:
+          - AppId
+          - EnvironmentType
+          - DataClassification
+      - Label:
+          default: "Cluster Configuration"
+        Parameters:
+          - ClusterName
+          - KubVersion
+          - VpcId
+          - VpcCidr
+          - Subnets
+          - CertificateArn
+
+Parameters:
+  AppId:
+    Type: String
+    Description: PlanIT application ID number, excludes APP- (ex. "4646")
+  EnvironmentType:
+    Type: String
+    Description: Environment type
+    Default: NONPROD
+    AllowedValues:
+      - DR
+      - PROD
+      - NONPROD
+      - PREPROD
+  DataClassification:
+    Type: String
+    Description: Data classification
+    Default: NonConfidential
+    AllowedValues:
+      - NonConfidential
+      - CompanyConfidential
+      - HighlyRestricted
+  ClusterName:
+    Type: String
+    Description: Name of the Cluster
+  KubVersion:
+    Type: String
+    Description: Kubernetes Version
+    AllowedValues:
+      - 1.14
+      - 1.15
+      - 1.16
+      - 1.17
+      - 1.18
+      - 1.19
+  VpcId:
+    Type: String
+    Description: VPC to provision the application
+  VpcCidr:
+    Type: String
+    Description: VPC Cidr ex. 172.23.46.0/23
+  Subnets:
+    Type: CommaDelimitedList
+    Description: Application subnet IDs
+  StageName:
+    Type: String
+    Default: dev
+    Description: Name of the deployment stage
+  CertificateArn:
+    Type: String
+    Description: ARN of the Certificate ex. arn:aws:acm:us-east-1:XXXXXXXX:certificate/XXXXXX-XXXXXXX-XXXXXXX-XXXXXXXX
+  EDOLoBNm:
+    Type: String
+    Description: Line Of Business Name
+  EDOApplNm:
+    Type: String
+    Description: Application Short Name
+  EDOSDLCEnv:
+    Type: String
+    Description: SDLC Environment Name
+  EDOApplWEId:
+    Type: String
+    Description: Application Work Effort (WE) / PPM Id
+Resources:
+    ManagementHelmChartCodeBuildProject:
+      Type: "AWS::CodeBuild::Project"
+      Properties:
+        Artifacts:
+          Location: "{{resolve:ssm:/HIG/Base/S3/ArtifactBucketName:1}}"
+          Name: !Sub "${AWS::StackName}.zip"
+          Path: EKS
+          Packaging: ZIP
+          Type: S3
+        BadgeEnabled: true
+        Cache:
+          Location: "{{resolve:ssm:/HIG/Base/S3/ArtifactBucketName:1}}/cache"
+          Modes:
+            - LOCAL_SOURCE_CACHE
+            - LOCAL_CUSTOM_CACHE
+          Type: S3
+        Description: !Sub "DO NOT DELETE - Codebuild project for ${ClusterName} cluster management helm charts"
+        EncryptionKey: "alias/pipeline"
+        Environment:
+          ComputeType: BUILD_GENERAL1_SMALL
+          EnvironmentVariables:
+            - Name: ARTIFACT_BUCKET
+              Type: PLAINTEXT
+              Value: "{{resolve:ssm:/HIG/Base/S3/ArtifactBucketName:1}}"
+            - Name: CLUSTER_NAME
+              Type: PLAINTEXT
+              Value: !Ref ClusterName
+            - Name: AWS_REGION
+              Type: PLAINTEXT
+              Value: !Ref "AWS::Region"
+            - Name: CERTIFICATE_ARN
+              Type: PLAINTEXT
+              Value: !Ref CertificateArn
+            - Name: VPC_CIDR
+              Type: PLAINTEXT
+              Value: !Ref VpcCidr
+          Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+          Type: LINUX_CONTAINER
+        LogsConfig:
+          CloudWatchLogs:
+            Status: ENABLED
+        Name: !Sub "APP-${AppId}-${ClusterName}-${EnvironmentType}-management-helmchart-codebuild-project"
+        ServiceRole: "{{resolve:ssm:/HIG/Base/IAM/CodeBuildRoleArn:1}}"
+        Source:
+          BuildSpec: buildspec.yml
+          GitCloneDepth: 1
+          InsecureSsl: false
+          Location: "https://github.thehartford.com/cloudops/cf_management_helm_charts"
+          ReportBuildStatus: true
+          Type: GITHUB_ENTERPRISE
+        SourceVersion: "master"
+        Tags:
+          - Key: "hig-billing"
+            Value: !Sub "APP-${AppId}"
+          - Key: "hig-planit-appid"
+            Value: !Sub "APP-${AppId}-NONPROD"
+          - Key: "hig-environment-type"
+            Value: !Sub "${EnvironmentType}"
+          - Key: "hig-data-classification"
+            Value: !Sub "${DataClassification}"
+          - Key: EDO-LoB-Nm
+            Value: !Ref EDOLoBNm
+          - Key: EDO-Appl-Nm
+            Value: !Ref EDOApplNm
+          - Key: EDO-SDLC-Env
+            Value: !Ref EDOSDLCEnv
+          - Key: EDO-Appl-WE-Id
+            Value: !Ref EDOApplWEId
+        TimeoutInMinutes: 5
+        VpcConfig:
+          SecurityGroupIds:
+            - !Sub "{{resolve:ssm:/HIG/${VpcId}/SG-Default:1}}"
+          Subnets:
+            "Fn::Transform":
+              Name: GetStringList
+              Parameters:
+                ParameterName: "app/SubnetIds"
+          VpcId: !Ref VpcId
+
+    ManagementHelmChartTriggerLambdaRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: "lambda.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Description: !Sub "DO NOT DELETE - Used by Lambda. Created by CloudFormation ${AWS::StackId}"
+        ManagedPolicyArns:
+          - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        Policies:
+          - PolicyName: TriggerCodeBuildProject
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action: "codebuild:StartBuild"
+                  Resource: !GetAtt ManagementHelmChartCodeBuildProject.Arn
+        Tags:
+          - Key: "hig-billing"
+            Value: !Sub "APP-${AppId}"
+          - Key: "hig-planit-appid"
+            Value: !Sub "APP-${AppId}-${EnvironmentType}"
+          - Key: "hig-environment-type"
+            Value: !Ref EnvironmentType
+          - Key: "hig-data-classification"
+            Value: !Ref DataClassification
+          - Key: EDO-LoB-Nm
+            Value: !Ref EDOLoBNm
+          - Key: EDO-Appl-Nm
+            Value: !Ref EDOApplNm
+          - Key: EDO-SDLC-Env
+            Value: !Ref EDOSDLCEnv
+          - Key: EDO-Appl-WE-Id
+            Value: !Ref EDOApplWEId
+
+    ManagementHelmChartTriggerLambda:
+      Type: "AWS::Lambda::Function"
+      Properties:
+        FunctionName: !Sub "APP-${AppId}-${ClusterName}-${EnvironmentType}-trigger"
+        Description: "DO NOT DELETE - Triggers management helm chart code build project"
+        Handler: index.handler
+        Runtime: python3.8
+        MemorySize: 128
+        Timeout: 900 # 10 minutes
+        Role: !GetAtt ManagementHelmChartTriggerLambdaRole.Arn
+        Layers:
+          - "Fn::Transform":
+              Name: LatestLayer
+              Parameters:
+                Layer: latest-boto3
+        Tags:
+          - Key: "hig-billing"
+            Value: !Sub "APP-${AppId}"
+          - Key: "hig-planit-appid"
+            Value: !Sub "APP-${AppId}-${EnvironmentType}"
+          - Key: "hig-environment-type"
+            Value: !Ref EnvironmentType
+          - Key: "hig-data-classification"
+            Value: !Ref DataClassification
+          - Key: EDO-LoB-Nm
+            Value: !Ref EDOLoBNm
+          - Key: EDO-Appl-Nm
+            Value: !Ref EDOApplNm
+          - Key: EDO-SDLC-Env
+            Value: !Ref EDOSDLCEnv
+          - Key: EDO-Appl-WE-Id
+            Value: !Ref EDOApplWEId
+        Code:
+          ZipFile: |-
+            #!/usr/bin/env python3
+            # -*- coding: utf-8 -*-
+
+            import boto3
+            import cfnresponse
+
+            def handler(event, context):
+              print('Event: ', event)
+
+              #Custom resource update triggers both 'delete' and 'create' event. No need to execute lambda twice
+              if event['RequestType'] != 'Delete'  :
+                try:
+                    client = boto3.client('codebuild')
+                    responseBody  = client.start_build(projectName=event['ResourceProperties']['projectName'])
+                    print('Codebuild successful: ', responseBody)
+                    cfnresponse.send(event, context, cfnresponse.SUCCESS, {"Success": 'See the details in CloudWatch Log Stream'})
+                except Exception as e:
+                    print('Codebuild failed: ', e)
+                    cfnresponse.send(event, context, cfnresponse.FAILED, {"Failure": 'See the details in CloudWatch Log Stream'})
+              else :
+                print("Delete event from Custom Resource. Do Nothing")
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {"Success": 'RequestType Delete Successful'})

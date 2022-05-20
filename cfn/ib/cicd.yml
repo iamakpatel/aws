@@ -1,0 +1,1500 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Template to deploy a CodePipeline for AWS EC2 ImageBuilder Recipes
+
+Metadata:
+  "AWS::CloudFormation::Interface":
+    ParameterGroups:
+      - Label:
+          default: "Application Configuration"
+        Parameters:
+          - AppId
+          - VpcId
+          - DataClassification
+          - EnvType
+          - ProductName
+      - Label:
+          default: "Deployment Configuration"
+        Parameters:
+          - BranchName
+          - ApprovalRequired
+          - ApprovalEmail
+      - Label:
+          default: "Other Configuration"
+        Parameters:
+          - AmiProductDescription
+          - StackNameSuffix
+          - SharedAccounts
+    ParameterLabels:
+      ApprovalRequired:
+        default: "Is approval required before deployment?"
+
+Parameters:
+  AppId:
+    Type: Number
+    Description: PlanIT application ID number, excludes APP- (ex. "4646")
+  DataClassification:
+    Type: String
+    Description: Data classification for the application
+    Default: NonConfidential
+    AllowedValues:
+      - NonConfidential
+      - CompanyConfidential
+      - HighlyRestricted
+  AmiProductDescription:
+    Type: String
+    Description: Additional descriptional tag for AMI
+  EnvType:
+    Type: String
+    AllowedValues:
+        - nonprod
+        - prod
+  ProductName:
+    Type: String
+    Description: The product name for the IB pipline i.e emr, ec2-al2, ec2-rhel7, ec2-rhel8, etc. this is required
+    # AllowedValues:
+    #     - emr
+    #     - ec2-al2
+    #     - ec2-rhel7
+    #     - ec2-rhel8
+  # TimeoutInMinutes:
+  #   Type: Number
+  #   Default: 5
+  #   Description: Build timeout in minutes
+  #   MinValue: 5
+  #   MaxValue: 480
+  BranchName:
+    Type: String
+    Default: dev
+    Description: Name of the deployment branch; dev branch is to dev as master is to prod
+    AllowedValues:
+      - dev
+      - master
+  StackNameSuffix:
+    Type: String
+    Default: ""
+    Description: "Optional suffix of the output stack name to become 'edo-ProductName-imagebuilder-app-AppId-EnvType-BranchName-StackNameSuffix'; empty string will produce 'edo-ProductName-imagebuilder-app-AppId-EnvType-BranchName'"
+    AllowedPattern: "[A-Za-z0-9\\-]*"
+    ConstraintDescription: Stack names can only have letters, numbers, and dashes
+  ApprovalRequired:
+    Type: String
+    Description: Require approval before deployment?
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  ApprovalEmail:
+    Type: String
+    Default: ""
+    Description: "Email address to approve deployments"
+  VpcId:
+    Type: "AWS::EC2::VPC::Id"
+    Description: VPC to provision the pipeline and application
+  SharedAccounts:
+    Type: String
+    Default: ""
+    Description: "Provide Account IDs seperated by comma. New AMI will be shared to these accounts."
+
+Rules:
+  ValidateAppId:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref AppId, ""]]
+        AssertDescription: "AppId is required"
+  ValidateVpcId:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref VpcId, ""]]
+        AssertDescription: "VpcId is required"
+  ValidateBranchName:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref BranchName, ""]]
+        AssertDescription: "BranchName is required"
+  ValidateEnvType:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref EnvType, ""]]
+        AssertDescription: "EnvType is required"
+  ValidateProductName:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ProductName, ""]]
+        AssertDescription: "ProductName is required"
+  ValidateAmiProductDescription:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref AmiProductDescription, ""]]
+        AssertDescription: "AmiProductDescription is required"
+        
+Conditions:
+  IsApprovalRequired: !Equals [!Ref ApprovalRequired, "true"]
+  HasApprovalEmail: !And
+    - !Condition IsApprovalRequired
+    - !Not [!Equals [!Ref ApprovalEmail, ""]]
+  HasStackNameSuffix: !Not [!Equals [!Ref StackNameSuffix, ""]]
+  IsCodePipelineAccount: !Equals [!Ref "AWS::AccountId", "293176983353"]
+  IsProdAccount: !Equals [prod, !Ref EnvType]
+
+Resources:
+  ApprovalTopic:
+    Type: "AWS::SNS::Topic"
+    Condition: IsApprovalRequired
+    Properties:
+      DisplayName: !If
+        - IsProdAccount
+        - !Sub "APP-${AppId} - Approval topic for HIG/edo_cloud_refarch#master to ${BranchName}"
+        - !Sub "APP-${AppId} - Approval topic for HIG/edo_cloud_refarch#dev to ${BranchName}"
+      KmsMasterKeyId: "alias/pipeline"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  ApprovalSubscription:
+    Type: "AWS::SNS::Subscription"
+    Condition: HasApprovalEmail
+    Properties:
+      Endpoint: !Ref ApprovalEmail
+      Protocol: email
+      Region: !Ref "AWS::Region"
+      TopicArn: !Ref ApprovalTopic
+
+  CloudWatchEventRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: CloudWatchEventPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "codepipeline:StartPipelineExecution"
+                Resource: !Sub "arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${BackendPipeline}"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  CloudWatchEventRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Triggers CodePipeline when files change"
+      EventPattern:
+        source:
+          - "aws.s3"
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource:
+            - "s3.amazonaws.com"
+          eventName:
+            - PutObject
+            - CompleteMultipartUpload
+          requestParameters:
+            bucketName: 
+              - "{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}"
+            key:
+              - !Sub "imagebuilder/${AppId}/${EnvType}/${AWS::StackName}.zip"
+      Targets:
+        - Arn: !Sub "arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${BackendPipeline}"
+          RoleArn: !GetAtt CloudWatchEventRole.Arn
+          Id: codepipeline-GithubPipeline
+
+  BackendProject:
+    Type: "AWS::CodeBuild::Project"
+    Properties:
+      Artifacts:
+        Location: "{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}"
+        Name: !Sub "${AWS::StackName}.zip"
+        Path: !Sub imagebuilder/${AppId}/${EnvType}
+        Packaging: ZIP
+        Type: S3
+      BadgeEnabled: true
+      Cache:
+        Location: "{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}/imagebuilder/${AppId}/${EnvType}/cache"
+        Modes:
+          - LOCAL_SOURCE_CACHE
+          - LOCAL_CUSTOM_CACHE
+        Type: S3
+      Description: !If
+        - HasStackNameSuffix
+        - !If
+            - IsProdAccount
+            - !Sub "APP-${AppId} - Uploads HIG/edo_cloud_refarch#master to S3 for ${BranchName}-${StackNameSuffix}"
+            - !Sub "APP-${AppId} - Uploads HIG/edo_cloud_refarch#dev to S3 for ${BranchName}-${StackNameSuffix}"
+        - !If
+            - IsProdAccount
+            - !Sub "APP-${AppId} - Uploads HIG/edo_cloud_refarch#master to S3 for ${BranchName}"
+            - !Sub "APP-${AppId} - Uploads HIG/edo_cloud_refarch#dev to S3 for ${BranchName}"
+        
+      EncryptionKey: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketKmsId:1}}
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: ARTIFACT_BUCKET
+            Type: PLAINTEXT
+            Value: "{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}"
+          - Name: SAM_CLI_TELEMETRY
+            Type: PLAINTEXT
+            Value: "0" # disable SAM telemetry
+          - Name: STAGE_NAME
+            Type: PLAINTEXT
+            Value: !Ref BranchName
+          - Name: PRODUCT_NAME
+            Type: PLAINTEXT
+            Value: !Ref ProductName
+        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+        Type: LINUX_CONTAINER
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+      Name: !If
+        - HasStackNameSuffix
+        - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}"
+        - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}"
+      ServiceRole: "{{resolve:ssm:/HIG/Base/IAM/CodeBuildRoleArn:1}}"
+      Source:
+        BuildSpec: imagebuilder/buildspec.yml
+        GitCloneDepth: 1
+        InsecureSsl: false
+        Location: !Sub "https://github.thehartford.com/HIG/edo_cloud_refarch"
+        ReportBuildStatus: true
+        Type: GITHUB_ENTERPRISE
+      SourceVersion: !Ref BranchName
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+      TimeoutInMinutes: 5 #!Ref TimeoutInMinutes
+      VpcConfig:
+        SecurityGroupIds:
+          - !Sub "{{resolve:ssm:/HIG/${VpcId}/SG-Default:1}}"
+        Subnets:
+          "Fn::Transform":
+            Name: GetStringList
+            Parameters:
+              ParameterName: "app/SubnetIds"
+        VpcId: !Ref VpcId
+
+  BackendPipeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    Properties:
+      ArtifactStores:
+        - ArtifactStore:
+            Location: "{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}"
+            Type: S3
+            EncryptionKey:
+              Id: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketKmsId:1}}
+              Type: KMS
+          Region: !Ref "AWS::Region"
+      Name: !If
+        - HasStackNameSuffix
+        - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}"
+        - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}"
+      RestartExecutionOnUpdate: true
+      RoleArn: !GetAtt "ImageBuilderCodePipelineRole.Arn"
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: "1"
+                Provider: S3
+              OutputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                S3Bucket: "{{resolve:ssm:/HIG/EDO/BASE/S3/ArtifactBucketName:1}}"
+                S3ObjectKey: !Sub "imagebuilder/${AppId}/${EnvType}/${AWS::StackName}.zip"
+                PollForSourceChanges: "false"
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: "1"
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                StackName: !If
+                  - HasStackNameSuffix
+                  - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}"
+                  - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}"
+                ChangeSetName: !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-ChangeSet"
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND
+                ParameterOverrides: !Sub |-
+                  {
+                    "AppId": "${AppId}",
+                    "VpcId": "${VpcId}",
+                    "DataClassification": "${DataClassification}",
+                    "EnvironmentType": "${EnvType}",
+                    "StageName": "${BranchName}",
+                    "SecurityGroupId": "${ImageBuilderSecurityGroup}",
+                    "ImageBuilderInstanceProfile": "${ImageBuilderInstanceProfile}",
+                    "AMITopic": "${AMITopic}",
+                    "KmsDistributionConfigurationFunction": "${KmsDistributionConfigurationFunction.Arn}",
+                    "AmiProductDescription": "${AmiProductDescription}",
+                    "SharedAccounts": "${SharedAccounts}"
+                  }
+                RoleArn: !GetAtt ImageBuilderCloudFormationRole.Arn
+                TemplatePath: !Sub "BuildArtifact::imagebuilder/${ProductName}/packaged.yml"
+              RunOrder: 1
+            - !If
+              - IsApprovalRequired
+              - Name: ApproveChangeSet
+                ActionTypeId:
+                  Category: Approval
+                  Owner: AWS
+                  Version: "1"
+                  Provider: Manual
+                Configuration:
+                  NotificationArn: !Ref ApprovalTopic
+                  CustomData: !Sub "Please approve or reject the changes to deploy to the ${BranchName} environment."
+                RunOrder: 2
+              - !Ref "AWS::NoValue"
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: "1"
+                Provider: CloudFormation
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                StackName: !If
+                  - HasStackNameSuffix
+                  - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}"
+                  - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}"
+                ChangeSetName: !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-ChangeSet"
+              RunOrder: 3
+        - Name: Start
+          Actions:
+            - Name: StartPipelines
+              ActionTypeId:
+                Category: Invoke
+                Owner: AWS
+                Version: "1"
+                Provider: Lambda
+              Configuration:
+                FunctionName: !Ref AutomaticStartFunction
+              RunOrder: 1
+
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  ImageBuilderSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow http to client host"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: "Allow Ansible SSH"
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/8
+        - Description: "Allow WinRM 2.0"
+          IpProtocol: tcp
+          FromPort: 5985
+          ToPort: 5986
+          CidrIp: 10.0.0.0/8
+      SecurityGroupEgress:
+        - Description: "Allow outgoing connections for ImageBuilder"
+          IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  ImageBuilderCodePipelineRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: "codepipeline.amazonaws.com"
+          Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/CodePipelinePolicy-${AWS::Region}"
+        - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/EDO-NP-CodePipelinePolicy-${AWS::Region}"
+
+  ImageBuilderCloudFormationPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: ImageBuilderCloudFormationPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "cloudformation:DescribeStacks"
+              - "cloudformation:ValidateTemplate"
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - "cloudformation:CreateChangeSet"
+              - "cloudformation:CreateStack"
+              - "cloudformation:DeleteStack"
+              - "cloudformation:UpdateStack"
+            Resource: !If
+              - HasStackNameSuffix
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}/*"
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}/*"
+            Condition:
+              ArnEquals:
+                "cloudformation:RoleArn": !GetAtt ImageBuilderCloudFormationRole.Arn
+          - Effect: Allow
+            Action: "cloudformation:CreateChangeSet"
+            Resource:
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:transform/*"
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/*"
+          - Effect: Allow
+            Action:
+              - "cloudformation:DeleteChangeSet"
+              - "cloudformation:DescribeChangeSet"
+              - "cloudformation:DescribeStackEvents"
+              - "cloudformation:ExecuteChangeSet"
+              - "cloudformation:ListStackResources"
+              - "cloudformation:SetStackPolicy"
+            Resource: !If
+              - HasStackNameSuffix
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}/*"
+              - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}/*"
+          - Effect: Allow
+            Action: "iam:PassRole"
+            Resource: !GetAtt ImageBuilderCloudFormationRole.Arn
+            # iam:PassedToService for cloudformation.amazonaws.com not supported
+          - Effect: Allow
+            Action: "lambda:InvokeFunction"
+            Resource: !GetAtt AutomaticStartFunction.Arn
+      Roles:
+        - Ref: ImageBuilderCodePipelineRole
+
+  ImageBuilderCloudFormationRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Description: !Sub "DO NOT DELETE - Used by CloudFormation. Created by CloudFormation ${AWS::StackId}"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "cloudformation.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSCloudFormationFullAccess"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSImageBuilderFullAccess"
+      Policies:
+        - PolicyName: ImageBuilderPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowParameterLookups
+                Effect: Allow
+                Action:
+                  - "secretsmanager:*"
+                  - "ssm:GetParameter"
+                  - "ssm:GetParameters"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:secretsmanager:*:${AWS::AccountId}:secret:*"
+                  - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:parameter/*"
+                  - !Sub "arn:${AWS::Partition}:ssm:*::parameter/*" # allow global AWS ssm parameters
+              - Sid: AllowTranforms
+                Effect: Allow
+                Action: "lambda:InvokeFunction"
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+              - Sid: AllowInstanceProfile
+                Effect: Allow
+                Action: "iam:GetInstanceProfile"
+                Resource: !GetAtt ImageBuilderInstanceProfile.Arn
+              - Sid: AllowRolePassing
+                Effect: Allow
+                Action: "iam:PassRole"
+                Resource: !GetAtt ImageBuilderInstanceProfileRole.Arn
+              - Sid: AllowKMSUsage
+                Effect: Allow
+                Action:
+                  - "kms:Encrypt"
+                  - "kms:Decrypt"
+                  - "kms:ReEncrypt*"
+                  - "kms:GenerateDataKey*"
+                  - "kms:DescribeKey"
+                Resource: "*"
+              - Sid: AllowSnsPublishAndSubscription
+                Effect: Allow
+                Action:
+                  - "sns:Publish"
+                  - "sns:Subscribe"
+                  - "sns:Unsubscribe"
+                  - "sns:ConfirmSubscription"
+                  - "sns:ListSubscriptionsByTopic"
+                Resource: !Ref AMITopic
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/hig/"
+      Roles:
+        - !Ref ImageBuilderInstanceProfileRole
+
+  ImageBuilderInstanceProfileRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSApplicationDiscoveryAgentAccess"
+      Policies:
+        - PolicyName: AllowResourceAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowSecretAccess
+                Effect: Allow
+                Action:
+                  - "secretsmanager:DescribeSecret"
+                  - "secretsmanager:GetSecretValue"
+                  - "secretsmanager:ListSecretVersionIds"
+                  - "secretsmanager:ListSecrets"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:secretsmanager:*:${AWS::AccountId}:secret:*"
+              - Sid: AllowS3Reading
+                Effect: Allow
+                Action:
+                  - "s3:GetObject*"
+                  - "s3:ListBucket"
+                  - "s3:ListMultipartUploadParts"
+                Resource: "*"
+              - Sid: AllowS3ReadLogWriting
+                Effect: Allow
+                Action:
+                  - "s3:AbortMultipartUpload"
+                  - "s3:DeleteObject*"
+                  - "s3:GetObject*"
+                  - "s3:ListBucket"
+                  - "s3:ListMultipartUploadParts"
+                  - "s3:PutObject*"
+                  - "s3:RestoreObject"
+                Resource:
+                  - "{{resolve:ssm:/HIG/Base/S3/LogBucketArn:1}}"
+                  - "{{resolve:ssm:/HIG/Base/S3/LogBucketArn:1}}/*"
+              - Sid: AllowKMSUsage
+                Effect: Allow
+                Action:
+                  - "kms:Encrypt"
+                  - "kms:Decrypt"
+                  - "kms:ReEncrypt*"
+                  - "kms:GenerateDataKey*"
+                  - "kms:DescribeKey"
+                Resource:
+                  - "{{resolve:ssm:/HIG/Base/KMS/AMIKeyArn:1}}"
+                  - "{{resolve:ssm:/HIG/Base/KMS/PipelineKeyArn:1}}"
+              - Sid: AllowSSMInspectorAccess
+                Effect: Allow
+                Action: "ssm:SendCommand"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AmazonInspector-ManageAWSAgent"
+              - Sid: AllowEc2TaggingForInspector
+                Effect: Allow
+                Action: "ec2:CreateTags"
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  AMITopicPolicy:
+    Type: "AWS::SNS::TopicPolicy"
+    Properties:
+      Topics:
+        - !Ref AMITopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              Service: "imagebuilder.amazonaws.com"
+            Action: "sns:Publish"
+            Resource: !Ref AMITopic
+            Condition:
+              StringEquals:
+                "AWS:SourceAccount": !Ref "AWS::AccountId"
+
+  AMITopic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      DisplayName: !Sub "APP-${AppId} - ImageBuilder AMI SNS topic to broadcast lastest ${BranchName} images"
+      KmsMasterKeyId: "alias/pipeline"
+      Subscription:
+        - Endpoint: !GetAtt AMIWriterFunction.Arn
+          Protocol: "lambda"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  AMIWriterFunctionPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt "AMIWriterFunction.Arn"
+      Principal: "sns.amazonaws.com"
+      SourceArn: !Ref AMITopic
+
+  AMIWriterFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AMIWriterFunction}"
+      RetentionInDays: 7
+
+  AMIWriterFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: !Sub "DO NOT DELETE - ImageBuilder AMI SSM Parameter writer for ${AWS::StackId}"
+      Handler: index.handler
+      Runtime: python3.7
+      Role: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/AMISSMDeploymentFunctionRole-${AWS::Region}"
+      Timeout: 900 # 10 minutes
+      Layers:
+        - "Fn::Transform":
+            Name: LatestLayer
+            Parameters:
+              Layer: latest-boto3
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+      Environment:
+        Variables:
+          APP_ID: !Ref AppId
+          STAGE_NAME: !Ref BranchName
+          ACCOUNT_IDS: !Ref SharedAccounts
+          PRODUCT_NAME: !Ref ProductName
+          ENV_TYPE: !If
+            - IsProdAccount
+            - PD
+            - NP
+      Code:
+        ZipFile: !Sub |-
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          
+          import os, json, boto3, logging
+          from distutils.util import strtobool
+          LOGGER = logging.getLogger()
+          LOGGER.setLevel(logging.INFO)
+          REGION_NAME = os.getenv("AWS_REGION", "us-east-1")
+          APP_ID = os.getenv("APP_ID", "1")
+          STAGE_NAME = os.getenv("STAGE_NAME", "dev")
+          ACCOUNT_IDS=os.getenv("ACCOUNT_IDS", None)
+          PRODUCT_NAME=os.getenv("PRODUCT_NAME", None).upper()
+          ENV_TYPE=os.getenv("ENV_TYPE", "NP")
+          
+          def create_ssm_client(account_id):
+              sts_connection = boto3.client('sts')
+              acct_b = sts_connection.assume_role(
+                  RoleArn=f"arn:aws:iam::{account_id}:role/DeploymentRole-{REGION_NAME}",
+                  RoleSessionName="cross_acct_bd_lambda_write_ssm"
+              )
+              ACCESS_KEY = acct_b["Credentials"]["AccessKeyId"]
+              SECRET_KEY = acct_b["Credentials"]["SecretAccessKey"]
+              SESSION_TOKEN = acct_b["Credentials"]["SessionToken"]
+              client = boto3.client(
+                  "ssm",
+                  aws_access_key_id=ACCESS_KEY,
+                  aws_secret_access_key=SECRET_KEY,
+                  aws_session_token=SESSION_TOKEN,
+                  region_name=REGION_NAME
+              )
+              return client
+          
+          def put_ssm_parameter(ssm_client, image, image_desc):
+              param_name = "ami"
+              product = PRODUCT_NAME
+              if PRODUCT_NAME.find("-") != -1:
+                  sub_products = PRODUCT_NAME.lower().split("-")
+                  param_name = sub_products[len(sub_products) - 1] + "-" + param_name
+                  product = sub_products[0].upper()
+              param_path = f"/HIG/EDO/BASE/{product}/{ENV_TYPE}/{param_name}"
+              LOGGER.info(" Parameter: Path=%s", param_path)
+              response = ssm_client.put_parameter(
+                  Name=param_path,
+                  Description=image_desc,
+                  Value=image,
+                  Type="String",
+                  Overwrite=True
+              )
+              LOGGER.info(response)
+                  
+          def handle_sns_message(msg):
+              image_name = msg.get("name")
+              for account_id in ACCOUNT_IDS.split(','):
+                ssm_client = create_ssm_client(account_id)
+                for resource in msg.get("outputResources", {}).get("amis", []):
+                    image_desc = resource["description"]
+                    image = resource["image"]
+                    put_ssm_parameter(ssm_client, image, image_desc)
+          
+          def handler(event, context):
+              LOGGER.info(event)
+              try:
+                  for record in event.get("Records", {}):
+                      msg_str = record.get("Sns", {}).get("Message")
+                      if msg_str is not None:
+                          handle_sns_message(json.loads(msg_str))
+              except:
+                LOGGER.exception("Unhandled exception occurred")
+
+  KmsDistributionConfigurationFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${KmsDistributionConfigurationFunction}"
+      RetentionInDays: 7
+
+  KmsDistributionConfigurationFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: "Creates an ImageBuilder DistributionConfiguration that allows AmiKeyId"
+      Handler: index.handler
+      Runtime: python3.7 # Python 3.8 not yet supported with ZipFile
+      MemorySize: 128
+      Timeout: 900 # 10 minutes
+      Role: !GetAtt KmsDistributionConfigurationFunctionRole.Arn
+      Layers:
+        - "Fn::Transform":
+            Name: LatestLayer
+            Parameters:
+              Layer: latest-boto3
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+      Code:
+        ZipFile: |-
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          import boto3
+          import logging
+          import uuid
+          from crhelper import CfnResource
+          logger = logging.getLogger(__name__)
+          helper = CfnResource(json_logging=False, log_level='DEBUG', boto_level='CRITICAL', sleep_on_delete=120)
+          try:
+              ib_client = boto3.client("imagebuilder")
+          except Exception as e:
+              helper.init_failure(e)
+          def lower_first_key(value):
+              if isinstance(value, list):
+                  rtn = [lower_first_key(v) for v in value]
+              elif isinstance(value, dict):
+                  rtn = {}
+                  for k, v in value.items():
+                      k = k[0].lower() + k[1:]
+                      rtn[k] = lower_first_key(v)
+              else:
+                  rtn = value
+              return rtn
+          def get_event_parameters(event):
+              name = event["ResourceProperties"]["Name"]
+              desc = event["ResourceProperties"]["Description"]
+              distros = lower_first_key(event["ResourceProperties"]["Distributions"])
+              tags = event["ResourceProperties"]["Tags"]
+              return name, desc, distros, tags
+          @helper.create
+          def create(event, context):
+              name, desc, distros, tags = get_event_parameters(event)
+              logger.info(f"Creating: name={name}, desc={desc}, distros={distros}, tags={tags}")
+              response = ib_client.create_distribution_configuration(
+                  name=name,
+                  description=desc,
+                  distributions=distros,
+                  tags=tags
+              )
+              arn = response["distributionConfigurationArn"]
+              helper.Data.update({"Arn": arn})
+              return arn
+          @helper.update
+          def update(event, context):
+              name, desc, distros, tags = get_event_parameters(event)
+              arn = event["PhysicalResourceId"]
+              logger.info(f"Updating: arn={arn}, desc={desc}, distros={distros}")
+              response = ib_client.update_distribution_configuration(
+                  distributionConfigurationArn=arn,
+                  description=desc,
+                  distributions=distros
+              )
+              arn = response["distributionConfigurationArn"]
+              helper.Data.update({"Arn": arn})
+              return arn
+          @helper.delete
+          def delete(event, context):
+              arn = event["PhysicalResourceId"]
+              if arn.startswith("arn"):
+                logger.info(f"Deleting: arn={arn}")
+                try:
+                  ib_client.delete_distribution_configuration(
+                    distributionConfigurationArn=arn
+                  )
+                except ib_client.exceptions.ResourceDependencyException:
+                  logger.exception(f"DistributionConfiguration missing: {arn}")
+          def handler(event, context):
+              helper(event, context)
+  KmsDistributionConfigurationFunctionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: CreateDistributionConfigurationPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "imagebuilder:CreateDistributionConfiguration"
+                  - "imagebuilder:UpdateDistributionConfiguration"
+                  - "imagebuilder:DeleteDistributionConfiguration"
+                  - "imagebuilder:TagResource"
+                Resource: "*"
+              - Sid: AllowImageBuilderToMakeServiceRoles
+                Effect: Allow
+                Action: "iam:CreateServiceLinkedRole"
+                Resource: "*"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  AutomaticStartFunctionPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Principal: "codepipeline.amazonaws.com"
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt AutomaticStartFunction.Arn
+
+  AutomaticStartFunctionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Description: !Sub "DO NOT DELETE - Used by Lambda. Created by CloudFormation ${AWS::StackId}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "codepipeline:PutJobSuccessResult"
+                  - "codepipeline:PutJobFailureResult"
+                Resource: "*"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  AutomaticStartFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AutomaticStartFunction}"
+      RetentionInDays: 7
+
+  AutomaticStartFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: !Sub "DO NOT DELETE - Auto ImageBuilder pipeline starter for ${AWS::StackId}"
+      Handler: index.handler
+      Runtime: python3.7
+      Role: !GetAtt AutomaticStartFunctionRole.Arn
+      Timeout: 900 # 10 minutes
+      Environment:
+        Variables:
+          AMI_SHARER_LAMBDA: !Ref AMISharerFunction
+      Layers:
+        - "Fn::Transform":
+            Name: LatestLayer
+            Parameters:
+              Layer: latest-boto3
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+      Code:
+        ZipFile: !Sub |-
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          import os
+          import json
+          import boto3
+          import logging
+          LOGGER = logging.getLogger()
+          LOGGER.setLevel(logging.INFO)
+          cp_client = boto3.client("codepipeline")
+          ib_client = boto3.client("imagebuilder")
+          lambda_client = boto3.client("lambda")
+          def get_pipelines_and_share_amis():
+              LOGGER.info(f"Looking/Sharing all Pipelines")
+              result = lambda_client.invoke(
+                  FunctionName=os.getenv("AMI_SHARER_LAMBDA"),
+                  InvocationType="RequestResponse",
+                  Payload=b"{}"
+              )
+              error = result.get("FunctionError")
+              if error is not None:
+                  raise ValueError("AMI Sharer generated an error: {error}")
+              pipelines = json.loads(result["Payload"].read())
+              return pipelines
+          def start_pipeline(pipeline):
+              ib_client.start_image_pipeline_execution(
+                  imagePipelineArn=pipeline if pipeline.startswith("arn:") else f"arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image-pipeline/{pipeline}"
+              )
+          def handler(event, context):
+              LOGGER.info(event)
+              jobId = event["CodePipeline.job"]["id"]
+              fake_run = len(jobId) == 0
+              try:
+                  pipelines = get_pipelines_and_share_amis()
+                  for pipeline in pipelines:
+                      LOGGER.info(f"Starting Pipeline: {pipeline}")
+                      start_pipeline(pipeline)
+              except Exception as e:
+                  LOGGER.exception("Failed AutoStart")
+                  if not fake_run:
+                      cp_client.put_job_failure_result(
+                          jobId=jobId,
+                          failureDetails={
+                              "type": "JobFailed",
+                              "message": str(e)
+                          }
+                      )
+              else:
+                  LOGGER.info("Success")
+                  if not fake_run:
+                      cp_client.put_job_success_result(
+                          jobId=jobId
+                      )
+  RAMAutoStarterCloudWatchEventRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Triggers RAMAutoStarterFunction when RAM associates"
+      EventPattern:
+        source:
+          - "aws.ram"
+        detail-type:
+          - "Resource Sharing State Change"
+        detail:
+          status:
+            - "associated"
+      Targets:
+        - Arn: !GetAtt RAMAutoStarterFunction.Arn
+          Id: "RAMAutoStarter"
+
+  RAMAutoStarterCloudWatchEventPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt "RAMAutoStarterFunction.Arn"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt RAMAutoStarterCloudWatchEventRule.Arn
+
+  RAMAutoStarterFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${RAMAutoStarterFunction}"
+      RetentionInDays: 7
+      
+  RAMAutoStarterFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: !Sub "DO NOT DELETE - Auto ImageBuilder pipeline starter from RAM shares for ${AWS::StackId}"
+      Handler: index.handler
+      Runtime: python3.7 # Python 3.8 not yet supported with ZipFile
+      MemorySize: 128
+      Timeout: 900 # 10 minutes
+      Role: !GetAtt RAMAutoStarterFunctionRole.Arn
+      Environment:
+        Variables:
+          AMI_SHARER_LAMBDA: !Ref AMISharerFunction
+      Layers:
+        - "Fn::Transform":
+            Name: LatestLayer
+            Parameters:
+              Layer: latest-boto3
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+      Code:
+        ZipFile: |-
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          import os
+          import re
+          import boto3
+          import json
+          import logging
+          LOGGER = logging.getLogger()
+          LOGGER.setLevel(logging.INFO)
+          ib = boto3.client("imagebuilder")
+          cf = boto3.client("cloudformation")
+          lam = boto3.client("lambda")
+          def get_share(event):
+              if event.get("source") == "aws.ram":
+                  d = event.get("detail", {})
+                  if d.get("status") == "associated":
+                      arn = d.get("resourceARN")
+                      m = re.match(r"arn:[^:]+:imagebuilder:[^:]+:[^:]+:image/([^/]+)/.*", arn)
+                      if m is not None:
+                          return arn
+              return None
+          def get_pipelines_and_share_amis(iarn):
+              LOGGER.info(f"Looking/Sharing: {iarn}")
+              result = lam.invoke(
+                  FunctionName=os.getenv("AMI_SHARER_LAMBDA"),
+                  InvocationType="RequestResponse",
+                  Payload=json.dumps({
+                      "ImageArn": iarn
+                  }).encode("UTF-8")
+              )
+              error = result.get("FunctionError")
+              if error is not None:
+                  raise ValueError("AMI Sharer generated an error: {error}")
+              pipelines = json.loads(result["Payload"].read())
+              return pipelines
+          def start_pipe(pipe):
+              LOGGER.info(f"Starting: {pipe}")
+              ib.start_image_pipeline_execution(
+                  imagePipelineArn=pipe
+              )
+          def handler(event, context):
+              LOGGER.info(event)
+              try:
+                  iarn = get_share(event)
+                  pipes = get_pipelines_and_share_amis(iarn)
+                  for pipe in pipes:
+                      start_pipe(pipe)
+              except:
+                  LOGGER.exception("Unable")
+  RAMAutoStarterFunctionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+
+  AutoStarterPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "IBAutoStarter-${AWS::StackName}-${AWS::Region}"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ImageBuilderAccess
+            Effect: Allow
+            Action:
+              - "imagebuilder:StartImagePipelineExecution"
+              - "iam:CreateServiceLinkedRole" # required permission to start role
+            Resource: "*"
+          - Sid: AMISharerLambdaAccess
+            Effect: Allow
+            Action:
+              - "lambda:InvokeFunction"
+            Resource: !GetAtt AMISharerFunction.Arn
+      Roles:
+        - !Ref AutomaticStartFunctionRole
+        - !Ref RAMAutoStarterFunctionRole
+
+  AMISharerFunctionAutoStarterPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt "AMISharerFunction.Arn"
+      Principal: "lambda.amazonaws.com"
+      SourceArn: !GetAtt AutomaticStartFunction.Arn
+
+  AMISharerFunctionRAMStarterPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt "AMISharerFunction.Arn"
+      Principal: "lambda.amazonaws.com"
+      SourceArn: !GetAtt RAMAutoStarterFunction.Arn
+
+  AMISharerFunctionLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AMISharerFunction}"
+      RetentionInDays: 7
+
+  AMISharerFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: !Sub "DO NOT DELETE - Lambda to share CodePipeline AMIs for ${AWS::StackId}"
+      Handler: index.handler
+      Runtime: python3.7 # Python 3.8 not yet supported with ZipFile
+      MemorySize: 128
+      Timeout: 900 # 10 minutes
+      Role: !GetAtt AMISharerFunctionRole.Arn
+      Environment:
+        Variables:
+          CODE_PIPELINE: "293176983353"
+          ORG_SSM_ROLE: !Sub "arn:${AWS::Partition}:iam::293176983353:role/OrgSSMRole"
+          PIPELINE_BASE: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image-pipeline/"
+          STACK_NAME: !If
+            - HasStackNameSuffix
+            - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}"
+            - !Sub "edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}"
+      Layers:
+        - "Fn::Transform":
+            Name: LatestLayer
+            Parameters:
+              Layer: latest-boto3
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
+      Code:
+        ZipFile: !Sub |-
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          import os
+          import re
+          import boto3
+          import json
+          import logging
+          LOGGER = logging.getLogger()
+          LOGGER.setLevel(logging.INFO)
+          ib = boto3.client("imagebuilder")
+          cf = boto3.client("cloudformation")
+          def get_pipes():
+              ps = cf.get_paginator('describe_stacks').paginate(StackName=os.getenv("STACK_NAME"))
+              for p in ps:
+                  for s in p["Stacks"]:
+                      outputs = {o["OutputKey"]: o["OutputValue"] for o in s.get("Outputs", {})}
+                      pis_str = outputs.get("Pipelines")
+                      return pis_str.split(",") if pis_str is not None else []
+              raise ValueError(f"Stack does exist")
+          def parents(pipes):
+              parns = {}
+              for pipe in pipes:
+                  pipe_arn = pipe if pipe.startswith("arn:") else (os.getenv("PIPELINE_BASE") + pipe)
+                  r = ib.get_image_pipeline(imagePipelineArn=pipe_arn)
+                  recipe = r.get("imagePipeline", {}).get("imageRecipeArn")
+                  if recipe is not None:
+                      r = ib.get_image_recipe(imageRecipeArn=recipe)
+                      p = r.get("imageRecipe", {}).get("parentImage", "")
+                      if p.startswith("arn:"):
+                          parns[p] = pipe_arn
+              return parns
+          def get_iname(parn):
+              m = re.match(r"arn:[^:]+:imagebuilder:[^:]+:[^:]+:image/([^/]+)/.*", parn)
+              if m is not None:
+                  return m.group(1)
+              return None
+          def get_iarns(parns):
+              if parns == {}:
+                return []
+              kwargs = {
+                "owner": "Shared",
+                "filters": [{
+                    "name": "name",
+                    "values": [p for p in [get_iname(parn) for parn in parns] if p is not None]
+                }]
+              }
+              iarns = []
+              while True:
+                  r = ib.list_images(**kwargs)
+                  iarns.extend([l["arn"] for l in r["imageVersionList"] if l["owner"] == os.getenv("CODE_PIPELINE")])
+                  t = kwargs["nextToken"] = r.get("nextToken")
+                  if t is None:
+                      break
+              return iarns
+          def root_arn(arn):
+              return "/".join(arn.split("/")[:2])
+          def pat(i):
+              xs = i.count("x")
+              return i if xs == 0 else (r"\d+" if xs == 1 else r"\d{%r}" % xs)
+          def find_parent(iarn, parns):
+              LOGGER.info(f"Finding: {iarn} in {parns}")
+              rarn = root_arn(iarn)
+              for parn, pipe in parns.items():
+                  if rarn == root_arn(parn):
+                      if parn.endswith("x"):
+                          ver = parn.split("/")[2]
+                          major, minor, micro = ver.split(".")
+                          p = f"{rarn}/{pat(major)}\\.{pat(minor)}\\.{pat(micro)}(/\d+)?"
+                          if re.match(p, iarn):
+                              return pipe
+                      elif iarn == parn:
+                          return pipe
+              return None
+          def share_ami(iarn):
+              r = ib.get_image(imageBuildVersionArn=iarn)
+              for d in r["image"]["outputResources"]["amis"]:
+                  if d["region"] == "${AWS::Region}":
+                      creds = boto3.client("sts").assume_role(
+                          RoleArn=os.getenv("ORG_SSM_ROLE"),
+                          RoleSessionName="OrgSSMAssumeRole",
+                      )["Credentials"]
+                      ec2 = boto3.client(
+                          "ec2",
+                          aws_access_key_id=creds["AccessKeyId"],
+                          aws_secret_access_key=creds["SecretAccessKey"],
+                          aws_session_token=creds["SessionToken"]
+                      )
+                      a = d["image"]
+                      LOGGER.info(f"Sharing: {a}")
+                      ec2.modify_image_attribute(
+                          ImageId=a,
+                          OperationType="add",
+                          Attribute="launchPermission",
+                          UserIds=["${AWS::AccountId}"],
+                      )
+          def handler(event, context):
+              LOGGER.info(event)
+              pipes = get_pipes()
+              iarn = event.get("ImageArn")
+              all_pipes = iarn is None
+              parns = parents(pipes)
+              if (parns == []):
+                return pipes
+              iarns = get_iarns(parns) if all_pipes else [iarn]
+              spipes = []
+              for iarn in iarns:
+                  pipe = find_parent(iarn, parns)
+                  if pipe is not None:
+                      if os.getenv("CODE_PIPELINE") in iarn:
+                          share_ami(iarn)
+                      spipes.append(pipe)
+              return pipes if all_pipes else spipes
+  AMISharerFunctionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: !Sub "IBAutoStarter-${AWS::StackName}-${AWS::Region}"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudFormationAccess
+                Effect: Allow
+                Action: "cloudformation:DescribeStacks"
+                Resource: !If
+                  - HasStackNameSuffix
+                  - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}-${StackNameSuffix}/*"
+                  - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/edo-${ProductName}-imagebuilder-app-${AppId}-${EnvType}-${BranchName}/*"
+              - Sid: ParentImageAccess
+                Effect: Allow
+                Action:
+                  - "imagebuilder:GetImagePipeline"
+                  - "imagebuilder:GetImageRecipe"
+                  - "imagebuilder:GetImage"
+                  - "imagebuilder:ListImages"
+                Resource: "*"
+              - Effect: Allow
+                Action: "sts:AssumeRole"
+                Resource: !Sub "arn:${AWS::Partition}:iam::293176983353:role/OrgSSMRole"
+              - Effect: Allow
+                Action:
+                  - "ec2:DescribeImages"
+                  - "ssm:DescribeDocument"
+                Resource: "*"
+      Tags:
+        - Key: "hig-billing"
+          Value: !Sub "APP-${AppId}"
+        - Key: "hig-planit-appid"
+          Value: !Sub "APP-${AppId}-${EnvType}"
+        - Key: "hig-environment-type"
+          Value: !If
+            - IsProdAccount
+            - PROD
+            - NONPROD
+        - Key: "hig-data-classification"
+          Value: !Ref DataClassification
